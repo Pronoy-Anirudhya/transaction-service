@@ -1,13 +1,32 @@
-package com.bracits.transactionservice.adapter.out.amqp;
+package com.bracits.transactionservice.adapter.out.amqp.publisher;
 
-import com.bracits.transactionservice.adapter.out.amqp.mapper.EventMessageMapper;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
+
+import com.bracits.transactionservice.adapter.out.amqp.constant.AmqpConstants;
+import com.bracits.transactionservice.adapter.out.amqp.fixture.EventFixtures;
+import com.bracits.transactionservice.adapter.out.amqp.mapper.impl.EventMessageMapperImpl;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.impl.PublishedMarkBufferImpl;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.impl.PublishedMarkFlusherImpl;
+import com.bracits.transactionservice.adapter.out.amqp.topology.RabbitTopologyInitializer;
 import com.bracits.transactionservice.config.AmqpConfig;
-import com.bracits.transactionservice.config.EventsProperties;
-import com.bracits.transactionservice.config.MetricConstants;
-import com.bracits.transactionservice.domain.event.SendMoneyEvent;
-import com.bracits.transactionservice.port.out.TxnRepository;
+import com.bracits.transactionservice.config.constant.MetricConstants;
+import com.bracits.transactionservice.config.properties.EventsProperties;
+import com.bracits.transactionservice.domain.event.model.SendMoneyEvent;
+import com.bracits.transactionservice.port.out.repository.TxnRepository;
 import io.micrometer.core.instrument.MeterRegistry;
 import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.nio.charset.StandardCharsets;
+import java.time.Duration;
+import java.util.Collection;
+import java.util.List;
+import java.util.Set;
+import java.util.UUID;
+import java.util.concurrent.ConcurrentHashMap;
+import java.util.concurrent.TimeUnit;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.AmqpAdmin;
@@ -32,24 +51,10 @@ import org.testcontainers.junit.jupiter.Container;
 import org.testcontainers.junit.jupiter.Testcontainers;
 import org.testcontainers.rabbitmq.RabbitMQContainer;
 
-import java.nio.charset.StandardCharsets;
-import java.time.Duration;
-import java.util.Collection;
-import java.util.List;
-import java.util.Set;
-import java.util.UUID;
-import java.util.concurrent.ConcurrentHashMap;
-import java.util.concurrent.TimeUnit;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
-
 /**
- * The event adapter against a real RabbitMQ 4 (quorum queues): topology, message format, confirms, returns and the
- * batched publish mark. Only the AMQP slice is started; the repository is a recording fake.
+ * The event adapter against a real RabbitMQ 4 (quorum queues): topology, message format, confirms,
+ * returns and the batched publish mark. Only the AMQP slice is started; the repository is a
+ * recording fake.
  */
 @Testcontainers(disabledWithoutDocker = true)
 @SpringBootTest(
@@ -76,7 +81,9 @@ class RabbitEventPublisherIntegrationTest {
   @ServiceConnection
   static final RabbitMQContainer RABBIT = new RabbitMQContainer("rabbitmq:4-management");
 
-  /** txnIds written by the flusher through {@link TxnRepository#markEventsPublished}. */
+  /**
+   * txnIds written by the flusher through {@link TxnRepository#markEventsPublished}.
+   */
   static final Set<UUID> MARKED = ConcurrentHashMap.newKeySet();
 
   @Autowired
@@ -103,13 +110,16 @@ class RabbitEventPublisherIntegrationTest {
 
     assertThat(rabbitctl("list_exchanges", "name", "type", "durable"))
         .anySatisfy(row -> assertThat(row).isEqualTo(List.of("mfs.transactions", "topic", "true")))
-        .anySatisfy(row -> assertThat(row).isEqualTo(List.of("mfs.transactions.dlx", "topic", "true")));
+        .anySatisfy(
+            row -> assertThat(row).isEqualTo(List.of("mfs.transactions.dlx", "topic", "true")));
+
     assertThat(rabbitctl("list_queues", "name", "type", "durable", "arguments"))
         .anySatisfy(row -> {
           assertThat(row.subList(0, 3)).containsExactly("audit.send-money", "quorum", "true");
           assertThat(row.get(3)).contains("x-dead-letter-exchange").contains("mfs.transactions.dlx")
               .contains("x-queue-type").contains("quorum");
         });
+
     assertThat(rabbitctl("list_bindings", "source_name", "destination_name", "routing_key"))
         .anySatisfy(row -> assertThat(row).isEqualTo(List.of("mfs.transactions", "audit.send-money",
             "send-money.#")));
@@ -124,6 +134,7 @@ class RabbitEventPublisherIntegrationTest {
 
     Message message = rabbitTemplate.receive(AmqpConstants.AUDIT_QUEUE, WAIT.toMillis());
     assertThat(message).isNotNull();
+
     MessageProperties properties = message.getMessageProperties();
     assertThat(properties.getReceivedDeliveryMode()).isEqualTo(MessageDeliveryMode.PERSISTENT);
     assertThat(properties.getMessageId()).isEqualTo(event.eventId().toString());
@@ -135,6 +146,7 @@ class RabbitEventPublisherIntegrationTest {
         .containsEntry("schema-version", 1)
         .containsEntry("txn-id", event.txnId().toString())
         .containsEntry("occurred-at", "2026-10-07T09:14:03.211Z");
+
     String body = new String(message.getBody(), StandardCharsets.UTF_8);
     assertThat(body).isEqualTo(EventFixtures.expectedJson(event)).contains("\"failureCode\":null");
 
@@ -150,11 +162,14 @@ class RabbitEventPublisherIntegrationTest {
 
     Message message = rabbitTemplate.receive(AmqpConstants.AUDIT_QUEUE, WAIT.toMillis());
     assertThat(message).isNotNull();
-    assertThat(message.getMessageProperties().getReceivedRoutingKey()).isEqualTo("send-money.failed");
-    assertThat(message.getMessageProperties().getHeaders()).containsEntry("event-type", "SendMoneyFailed");
+    assertThat(message.getMessageProperties().getReceivedRoutingKey()).isEqualTo(
+        "send-money.failed");
+    assertThat(message.getMessageProperties().getHeaders()).containsEntry("event-type",
+        "SendMoneyFailed");
     assertThat(new String(message.getBody(), StandardCharsets.UTF_8))
         .isEqualTo(EventFixtures.expectedJson(event))
         .contains("\"ledgerTimestamp\":null,\"failureCode\":\"INSUFFICIENT_FUNDS\"");
+
     await().atMost(WAIT).untilAsserted(() -> assertThat(MARKED).contains(event.txnId()));
   }
 
@@ -176,16 +191,19 @@ class RabbitEventPublisherIntegrationTest {
 
   @Test
   void unroutableEventIsReturnedAndNotMarked() throws InterruptedException {
-    Binding binding = new Binding(AmqpConstants.AUDIT_QUEUE, Binding.DestinationType.QUEUE, EXCHANGE,
+    Binding binding = new Binding(AmqpConstants.AUDIT_QUEUE, Binding.DestinationType.QUEUE,
+        EXCHANGE,
         AmqpConstants.SEND_MONEY_BINDING_PATTERN, null);
     SendMoneyEvent event = EventFixtures.completedEvent(EventFixtures.newTxnId());
     double returnedBefore = count(MetricConstants.RESULT_RETURNED);
     double acksBefore = count(MetricConstants.RESULT_ACK);
+
     amqpAdmin.removeBinding(binding);
     try {
       publisher.publish(event);
 
-      await().atMost(WAIT).until(() -> count(MetricConstants.RESULT_RETURNED) == returnedBefore + 1);
+      await().atMost(WAIT)
+          .until(() -> count(MetricConstants.RESULT_RETURNED) == returnedBefore + 1);
       TimeUnit.MILLISECONDS.sleep(500); // several flush intervals
       assertThat(MARKED).doesNotContain(event.txnId());
       assertThat(count(MetricConstants.RESULT_ACK)).isEqualTo(acksBefore);
@@ -195,10 +213,13 @@ class RabbitEventPublisherIntegrationTest {
   }
 
   private double count(String result) {
-    return meterRegistry.counter(MetricConstants.EVENTS_PUBLISH, MetricConstants.TAG_RESULT, result).count();
+    return meterRegistry.counter(MetricConstants.EVENTS_PUBLISH, MetricConstants.TAG_RESULT, result)
+        .count();
   }
 
-  /** {@code rabbitmqctl list_*} rows as tab-separated columns, without headers. */
+  /**
+   * {@code rabbitmqctl list_*} rows as tab-separated columns, without headers.
+   */
   private static List<List<String>> rabbitctl(String command, String... columns) throws Exception {
     String[] args = new String[columns.length + 4];
     args[0] = "rabbitmqctl";
@@ -206,17 +227,21 @@ class RabbitEventPublisherIntegrationTest {
     args[2] = "--no-table-headers";
     args[3] = command;
     System.arraycopy(columns, 0, args, 4, columns.length);
+
     ExecResult result = RABBIT.execInContainer(args);
     assertThat(result.getExitCode()).as(result.getStderr()).isZero();
-    return result.getStdout().lines().filter(line -> !line.isBlank()).map(line -> List.of(line.split("\t"))).toList();
+
+    return result.getStdout().lines().filter(line -> !line.isBlank())
+        .map(line -> List.of(line.split("\t"))).toList();
   }
 
   @Configuration(proxyBeanMethods = false)
   @ImportAutoConfiguration({RabbitAutoConfiguration.class, JacksonAutoConfiguration.class})
   @EnableConfigurationProperties(EventsProperties.class)
   @EnableScheduling
-  @Import({AmqpConfig.class, RabbitTopologyInitializer.class, RabbitEventPublisher.class, EventMessageMapper.class,
-      PublishedMarkBuffer.class, PublishedMarkFlusher.class})
+  @Import({AmqpConfig.class, RabbitTopologyInitializer.class, RabbitEventPublisher.class,
+      EventMessageMapperImpl.class,
+      PublishedMarkBufferImpl.class, PublishedMarkFlusherImpl.class})
   static class AmqpSlice {
 
     @Bean
@@ -232,6 +257,7 @@ class RabbitEventPublisherIntegrationTest {
         MARKED.addAll(ids);
         return ids.size();
       });
+
       return repository;
     }
   }

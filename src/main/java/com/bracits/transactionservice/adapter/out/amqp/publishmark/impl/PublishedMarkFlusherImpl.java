@@ -1,29 +1,28 @@
-package com.bracits.transactionservice.adapter.out.amqp;
+package com.bracits.transactionservice.adapter.out.amqp.publishmark.impl;
 
-import com.bracits.transactionservice.config.EventsProperties;
-import com.bracits.transactionservice.config.PropertyConstants;
-import com.bracits.transactionservice.port.out.TxnRepository;
+import com.bracits.transactionservice.adapter.out.amqp.constant.AmqpConstants;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.PublishedMarkBuffer;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.PublishedMarkFlusher;
+import com.bracits.transactionservice.config.constant.PropertyConstants;
+import com.bracits.transactionservice.config.properties.EventsProperties;
+import com.bracits.transactionservice.port.out.repository.TxnRepository;
 import jakarta.annotation.PreDestroy;
+import java.util.List;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.ReentrantLock;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.scheduling.annotation.Scheduled;
 import org.springframework.stereotype.Component;
 
-import java.util.List;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicBoolean;
-import java.util.concurrent.locks.ReentrantLock;
-
 /**
- * Writes the batched {@code event_published_at} mark (spec 9 rule 4, P11): every {@code poc.events.flush-interval}
- * (100 ms), or as soon as {@code poc.events.flush-batch-size} (500) IDs are buffered, in statements of at most that
- * many IDs ({@link TxnRepository#markEventsPublished}, {@code synchronous_commit = off}). A failed write is logged and
- * dropped: a missing mark only causes a harmless republish.
+ * Default implementation of {@link PublishedMarkFlusher}.
  */
 @Component
-public final class PublishedMarkFlusher {
+public final class PublishedMarkFlusherImpl implements PublishedMarkFlusher {
 
-  private static final Logger LOG = LoggerFactory.getLogger(PublishedMarkFlusher.class);
+  private static final Logger LOG = LoggerFactory.getLogger(PublishedMarkFlusherImpl.class);
 
   private final PublishedMarkBuffer buffer;
   private final TxnRepository txnRepository;
@@ -31,13 +30,17 @@ public final class PublishedMarkFlusher {
   private final ReentrantLock flushLock = new ReentrantLock();
   private final AtomicBoolean earlyFlushPending = new AtomicBoolean();
 
-  public PublishedMarkFlusher(PublishedMarkBuffer buffer, TxnRepository txnRepository, EventsProperties properties) {
+  public PublishedMarkFlusherImpl(PublishedMarkBuffer buffer, TxnRepository txnRepository,
+      EventsProperties properties) {
     this.buffer = buffer;
     this.txnRepository = txnRepository;
     this.batchSize = properties.flushBatchSize();
   }
 
-  /** Called on broker ack. Never blocks: a full batch is flushed on a virtual thread. */
+  /**
+   * Called on broker ack. Never blocks: a full batch is flushed on a virtual thread.
+   */
+  @Override
   public void onAck(UUID txnId) {
     if (buffer.add(txnId) >= batchSize) {
       requestEarlyFlush();
@@ -45,20 +48,23 @@ public final class PublishedMarkFlusher {
   }
 
   @Scheduled(fixedDelayString = PropertyConstants.EVENTS_FLUSH_INTERVAL_PLACEHOLDER)
+  @Override
   public void scheduledFlush() {
     flush();
   }
 
   /**
-   * Drains the buffer in statements of at most {@code batchSize} IDs. Skips (returns 0) if another flush is running;
-   * that flush drains the buffer anyway.
+   * Drains the buffer in statements of at most {@code batchSize} IDs. Skips (returns 0) if another
+   * flush is running; that flush drains the buffer anyway.
    *
    * @return number of IDs handed to the repository (written or dropped)
    */
+  @Override
   public int flush() {
     if (!flushLock.tryLock()) {
       return 0;
     }
+
     try {
       return drainAll();
     } finally {
@@ -66,7 +72,9 @@ public final class PublishedMarkFlusher {
     }
   }
 
-  /** Final flush on shutdown; waits for a running flush instead of skipping. */
+  /**
+   * Final flush on shutdown; waits for a running flush instead of skipping.
+   */
   @PreDestroy
   public void flushOnShutdown() {
     flushLock.lock();
@@ -97,6 +105,7 @@ public final class PublishedMarkFlusher {
       handled += batch.size();
       batch = buffer.drain(batchSize);
     }
+
     return handled;
   }
 

@@ -1,9 +1,17 @@
-package com.bracits.transactionservice.adapter.out.amqp;
+package com.bracits.transactionservice.adapter.out.amqp.publishmark;
 
-import com.bracits.transactionservice.port.out.TxnRepository;
-import org.junit.jupiter.api.Test;
-import org.springframework.dao.DataAccessResourceFailureException;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.awaitility.Awaitility.await;
+import static org.mockito.ArgumentMatchers.any;
+import static org.mockito.Mockito.doAnswer;
+import static org.mockito.Mockito.doThrow;
+import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.when;
 
+import com.bracits.transactionservice.adapter.out.amqp.fixture.EventFixtures;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.impl.PublishedMarkBufferImpl;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.impl.PublishedMarkFlusherImpl;
+import com.bracits.transactionservice.port.out.repository.TxnRepository;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Collection;
@@ -14,14 +22,8 @@ import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.stream.IntStream;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.awaitility.Awaitility.await;
-import static org.mockito.ArgumentMatchers.any;
-import static org.mockito.Mockito.doAnswer;
-import static org.mockito.Mockito.doThrow;
-import static org.mockito.Mockito.mock;
-import static org.mockito.Mockito.when;
+import org.junit.jupiter.api.Test;
+import org.springframework.dao.DataAccessResourceFailureException;
 
 class PublishedMarkFlusherTest {
 
@@ -29,9 +31,10 @@ class PublishedMarkFlusherTest {
 
   private final List<List<UUID>> statements = new CopyOnWriteArrayList<>();
   private final TxnRepository txnRepository = mock(TxnRepository.class);
-  private final PublishedMarkBuffer buffer = new PublishedMarkBuffer();
-  private final PublishedMarkFlusher flusher =
-      new PublishedMarkFlusher(buffer, txnRepository, EventFixtures.properties(Duration.ofSeconds(5), BATCH));
+  private final PublishedMarkBuffer buffer = new PublishedMarkBufferImpl();
+  private final PublishedMarkFlusherImpl flusher =
+      new PublishedMarkFlusherImpl(buffer, txnRepository,
+          EventFixtures.properties(Duration.ofSeconds(5), BATCH));
 
   PublishedMarkFlusherTest() {
     when(txnRepository.markEventsPublished(any())).thenAnswer(invocation -> {
@@ -79,8 +82,11 @@ class PublishedMarkFlusherTest {
     ids.forEach(flusher::onAck);
 
     await().atMost(Duration.ofSeconds(5)).untilAsserted(() ->
-        assertThat(statements.stream().flatMap(List::stream).toList()).containsExactlyInAnyOrderElementsOf(ids));
-    assertThat(statements).allSatisfy(statement -> assertThat(statement).hasSizeLessThanOrEqualTo(BATCH));
+        assertThat(
+            statements.stream().flatMap(List::stream).toList()).containsExactlyInAnyOrderElementsOf(
+            ids));
+    assertThat(statements).allSatisfy(
+        statement -> assertThat(statement).hasSizeLessThanOrEqualTo(BATCH));
   }
 
   @Test
@@ -92,6 +98,7 @@ class PublishedMarkFlusherTest {
           return ids.size();
         })
         .when(txnRepository).markEventsPublished(any());
+
     ids(3).forEach(buffer::add);
 
     assertThat(flusher.flush()).isEqualTo(3);
@@ -108,17 +115,20 @@ class PublishedMarkFlusherTest {
   void concurrentFlushIsSkippedWhileOneIsRunning() throws InterruptedException {
     CountDownLatch inside = new CountDownLatch(1);
     CountDownLatch release = new CountDownLatch(1);
+
     doAnswer(invocation -> {
       inside.countDown();
       release.await(5, TimeUnit.SECONDS);
       return 1;
     }).when(txnRepository).markEventsPublished(any());
+
     buffer.add(UUID.randomUUID());
     AtomicBoolean done = new AtomicBoolean();
     Thread running = Thread.ofVirtual().start(() -> {
       flusher.flush();
       done.set(true);
     });
+
     assertThat(inside.await(5, TimeUnit.SECONDS)).isTrue();
     buffer.add(UUID.randomUUID());
 

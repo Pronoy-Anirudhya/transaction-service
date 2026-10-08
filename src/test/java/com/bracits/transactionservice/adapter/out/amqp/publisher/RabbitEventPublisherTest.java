@@ -1,28 +1,4 @@
-package com.bracits.transactionservice.adapter.out.amqp;
-
-import com.bracits.transactionservice.adapter.out.amqp.mapper.EventMessageMapper;
-import com.bracits.transactionservice.config.EventsProperties;
-import com.bracits.transactionservice.config.MetricConstants;
-import com.bracits.transactionservice.domain.event.SendMoneyEvent;
-import com.bracits.transactionservice.port.out.TxnRepository;
-import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
-import org.junit.jupiter.api.AfterEach;
-import org.junit.jupiter.api.Test;
-import org.mockito.ArgumentCaptor;
-import org.springframework.amqp.AmqpConnectException;
-import org.springframework.amqp.core.Message;
-import org.springframework.amqp.core.ReturnedMessage;
-import org.springframework.amqp.rabbit.connection.ConnectionFactory;
-import org.springframework.amqp.rabbit.connection.CorrelationData;
-import org.springframework.amqp.rabbit.connection.CorrelationData.Confirm;
-import org.springframework.amqp.rabbit.core.RabbitOperations;
-import tools.jackson.databind.json.JsonMapper;
-
-import java.net.ConnectException;
-import java.time.Duration;
-import java.util.UUID;
-import java.util.concurrent.CompletableFuture;
-import java.util.function.Consumer;
+package com.bracits.transactionservice.adapter.out.amqp.publisher;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.awaitility.Awaitility.await;
@@ -36,16 +12,48 @@ import static org.mockito.Mockito.timeout;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
+import com.bracits.transactionservice.adapter.out.amqp.constant.AmqpConstants;
+import com.bracits.transactionservice.adapter.out.amqp.executor.EventSendExecutor;
+import com.bracits.transactionservice.adapter.out.amqp.executor.impl.EventSendExecutorImpl;
+import com.bracits.transactionservice.adapter.out.amqp.fixture.EventFixtures;
+import com.bracits.transactionservice.adapter.out.amqp.mapper.impl.EventMessageMapperImpl;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.PublishedMarkBuffer;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.PublishedMarkFlusher;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.impl.PublishedMarkBufferImpl;
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.impl.PublishedMarkFlusherImpl;
+import com.bracits.transactionservice.config.constant.MetricConstants;
+import com.bracits.transactionservice.config.properties.EventsProperties;
+import com.bracits.transactionservice.domain.event.model.SendMoneyEvent;
+import com.bracits.transactionservice.port.out.repository.TxnRepository;
+import io.micrometer.core.instrument.simple.SimpleMeterRegistry;
+import java.net.ConnectException;
+import java.time.Duration;
+import java.util.UUID;
+import java.util.concurrent.CompletableFuture;
+import java.util.function.Consumer;
+import org.junit.jupiter.api.AfterEach;
+import org.junit.jupiter.api.Test;
+import org.mockito.ArgumentCaptor;
+import org.springframework.amqp.AmqpConnectException;
+import org.springframework.amqp.core.Message;
+import org.springframework.amqp.core.ReturnedMessage;
+import org.springframework.amqp.rabbit.connection.ConnectionFactory;
+import org.springframework.amqp.rabbit.connection.CorrelationData.Confirm;
+import org.springframework.amqp.rabbit.connection.CorrelationData;
+import org.springframework.amqp.rabbit.core.RabbitOperations;
+import tools.jackson.databind.json.JsonMapper;
+
 class RabbitEventPublisherTest {
 
   private static final Duration CONFIRM_TIMEOUT = Duration.ofMillis(200);
 
   private final EventsProperties properties = EventFixtures.properties(CONFIRM_TIMEOUT, 500);
   private final RabbitOperations rabbit = mock(RabbitOperations.class);
-  private final PublishedMarkBuffer buffer = new PublishedMarkBuffer();
+  private final PublishedMarkBuffer buffer = new PublishedMarkBufferImpl();
   private final PublishedMarkFlusher flusher =
-      new PublishedMarkFlusher(buffer, mock(TxnRepository.class), properties);
-  private final EventSendExecutor executor = new EventSendExecutor(AmqpConstants.EVENT_SEND_THREAD_PREFIX);
+      new PublishedMarkFlusherImpl(buffer, mock(TxnRepository.class), properties);
+  private final EventSendExecutor executor = new EventSendExecutorImpl(
+      AmqpConstants.EVENT_SEND_THREAD_PREFIX);
   private final SimpleMeterRegistry meterRegistry = new SimpleMeterRegistry();
   private final RabbitEventPublisher publisher;
 
@@ -54,7 +62,9 @@ class RabbitEventPublisherTest {
     when(connectionFactory.isPublisherConfirms()).thenReturn(true);
     when(connectionFactory.isPublisherReturns()).thenReturn(true);
     when(rabbit.getConnectionFactory()).thenReturn(connectionFactory);
-    publisher = new RabbitEventPublisher(rabbit, new EventMessageMapper(JsonMapper.builder().build()), flusher,
+
+    publisher = new RabbitEventPublisher(rabbit,
+        new EventMessageMapperImpl(JsonMapper.builder().build()), flusher,
         executor, properties, meterRegistry);
   }
 
@@ -76,10 +86,13 @@ class RabbitEventPublisherTest {
 
     ArgumentCaptor<Message> message = ArgumentCaptor.forClass(Message.class);
     ArgumentCaptor<CorrelationData> correlation = ArgumentCaptor.forClass(CorrelationData.class);
-    verify(rabbit, timeout(5_000)).send(eq("mfs.transactions"), eq("send-money.completed"), message.capture(),
+    verify(rabbit, timeout(5_000)).send(eq("mfs.transactions"), eq("send-money.completed"),
+        message.capture(),
         correlation.capture());
     assertThat(correlation.getValue().getId()).isEqualTo(event.txnId().toString());
-    assertThat(message.getValue().getMessageProperties().getMessageId()).isEqualTo(event.eventId().toString());
+    assertThat(message.getValue().getMessageProperties().getMessageId()).isEqualTo(
+        event.eventId().toString());
+
     Thread thread = sender.join();
     assertThat(thread.isVirtual()).isTrue();
     assertThat(thread.getName()).startsWith(AmqpConstants.EVENT_SEND_THREAD_PREFIX);
@@ -112,8 +125,9 @@ class RabbitEventPublisherTest {
   void returnedMessageIsNotMarkedEvenThoughTheBrokerAcked() {
     SendMoneyEvent event = EventFixtures.failedEvent(EventFixtures.newTxnId());
     onSend(correlation -> {
-      correlation.setReturned(new ReturnedMessage(new Message(new byte[0]), 312, "NO_ROUTE", "mfs.transactions",
-          "send-money.failed"));
+      correlation.setReturned(
+          new ReturnedMessage(new Message(new byte[0]), 312, "NO_ROUTE", "mfs.transactions",
+              "send-money.failed"));
       correlation.getFuture().complete(new Confirm(true, null));
     });
 
@@ -139,7 +153,8 @@ class RabbitEventPublisherTest {
   @Test
   void sendExceptionIsCountedAsError() {
     doThrow(new AmqpConnectException(new ConnectException("refused")))
-        .when(rabbit).send(anyString(), anyString(), any(Message.class), any(CorrelationData.class));
+        .when(rabbit)
+        .send(anyString(), anyString(), any(Message.class), any(CorrelationData.class));
 
     publisher.publish(EventFixtures.completedEvent(EventFixtures.newTxnId()));
 
@@ -179,6 +194,7 @@ class RabbitEventPublisherTest {
   }
 
   private double count(String result) {
-    return meterRegistry.counter(MetricConstants.EVENTS_PUBLISH, MetricConstants.TAG_RESULT, result).count();
+    return meterRegistry.counter(MetricConstants.EVENTS_PUBLISH, MetricConstants.TAG_RESULT, result)
+        .count();
   }
 }

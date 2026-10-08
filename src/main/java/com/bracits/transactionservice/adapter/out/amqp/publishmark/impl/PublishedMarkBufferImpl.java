@@ -1,30 +1,35 @@
-package com.bracits.transactionservice.adapter.out.amqp;
+package com.bracits.transactionservice.adapter.out.amqp.publishmark.impl;
 
-import org.springframework.stereotype.Component;
-
+import com.bracits.transactionservice.adapter.out.amqp.publishmark.PublishedMarkBuffer;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.atomic.AtomicInteger;
+import org.springframework.stereotype.Component;
 
 /**
- * In-memory, lock-free buffer of txnIds whose event the broker acked (spec 9 rule 4). Losing its content (crash) only
- * causes a harmless republish, so it is deliberately not durable.
+ * Default implementation of {@link PublishedMarkBuffer}.
  */
 @Component
-public final class PublishedMarkBuffer {
+public final class PublishedMarkBufferImpl implements PublishedMarkBuffer {
 
   private final ConcurrentLinkedQueue<UUID> ids = new ConcurrentLinkedQueue<>();
   private final AtomicInteger size = new AtomicInteger();
 
-  /** Adds {@code txnId}; returns the (approximate) number of buffered IDs after the add. */
+  /**
+   * Adds {@code txnId}; returns the (approximate) number of buffered IDs after the add.
+   */
+  @Override
   public int add(UUID txnId) {
     ids.add(txnId);
     return size.incrementAndGet();
   }
 
-  /** Removes and returns up to {@code max} IDs, oldest first. */
+  /**
+   * Removes and returns up to {@code max} IDs, oldest first.
+   */
+  @Override
   public List<UUID> drain(int max) {
     List<UUID> batch = new ArrayList<>(Math.min(max, Math.max(size.get(), 0)));
     UUID id;
@@ -32,13 +37,16 @@ public final class PublishedMarkBuffer {
       batch.add(id);
       size.decrementAndGet();
     }
+
     return batch;
   }
 
+  @Override
   public int size() {
     return Math.max(size.get(), 0);
   }
 
+  @Override
   public boolean isEmpty() {
     return ids.isEmpty();
   }

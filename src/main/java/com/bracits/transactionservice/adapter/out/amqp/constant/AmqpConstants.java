@@ -1,16 +1,24 @@
-package com.bracits.transactionservice.adapter.out.amqp;
+package com.bracits.transactionservice.adapter.out.amqp.constant;
 
 import org.springframework.amqp.core.MessageProperties;
 
-/** RabbitMQ topology, message headers, bean names and log messages of the event adapter (spec 9). */
+/**
+ * RabbitMQ topology, message headers, bean names and log messages of the event adapter (spec 9).
+ */
 public final class AmqpConstants {
 
   // Topology (the main exchange name comes from poc.events.exchange)
-  /** Dead-letter exchange (topic, durable). */
+  /**
+   * Dead-letter exchange (topic, durable).
+   */
   public static final String DEAD_LETTER_EXCHANGE = "mfs.transactions.dlx";
-  /** Demo quorum queue, for tests and demos only. */
+  /**
+   * Demo quorum queue, for tests and demos only.
+   */
   public static final String AUDIT_QUEUE = "audit.send-money";
-  /** Binding of the demo queue: every Send Money event. */
+  /**
+   * Binding of the demo queue: every Send Money event.
+   */
   public static final String SEND_MONEY_BINDING_PATTERN = "send-money.#";
 
   // Queue arguments
@@ -23,7 +31,9 @@ public final class AmqpConstants {
   public static final String HEADER_SCHEMA_VERSION = "schema-version";
   public static final String HEADER_TXN_ID = "txn-id";
   public static final String HEADER_OCCURRED_AT = "occurred-at";
-  /** W3C trace context; written by the RabbitTemplate observation when tracing is on. */
+  /**
+   * W3C trace context; written by the RabbitTemplate observation when tracing is on.
+   */
   public static final String HEADER_TRACEPARENT = "traceparent";
   public static final String CONTENT_TYPE_JSON = MessageProperties.CONTENT_TYPE_JSON;
 
