@@ -1,0 +1,35 @@
+# Build output and caches (including per-agent build dirs: build-*, .gradle-*)
+build/
+build-*/
+out/
+bin/
+.gradle/
+.gradle-*/
+.kotlin/
+.jqwik-database
+
+# IDE and OS files
+.idea/
+.vscode/
+*.iml
+*.iws
+*.ipr
+.DS_Store
+
+# VCS, tooling, local env and docs not needed in the image
+.git/
+.gitignore
+.gitattributes
+.claude/
+.env
+.env.*
+docs/
+deploy/
+HELP.md
+README.md
+PROGRESS.md
+
+# Container files themselves
+Dockerfile
+.dockerignore
+docker-compose.yml

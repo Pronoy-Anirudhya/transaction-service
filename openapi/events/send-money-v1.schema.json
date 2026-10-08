@@ -1,0 +1,157 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:mfs:events:send-money:v1",
+  "title": "SendMoneyCompleted / SendMoneyFailed, schema version 1",
+  "description": "Payload published by transaction-service to RabbitMQ after a Send Money reaches a final status (spec 9). Amounts are integer poisha (BDT minor units).\n\nAMQP transport: exchange `mfs.transactions` (topic, durable); routing key `send-money.completed` or `send-money.failed`. Message properties: `message_id` = `eventId` = UUIDv5(namespace 6f1d3c8e-2b7a-5c1e-9f4d-0a6b8e2c7d31, txnId + eventType), deterministic so a republish carries the same id; `delivery_mode` = 2 (persistent); `content_type` = `application/json`. Headers: `event-type` (= eventType), `schema-version` (= 1), `txn-id` (= txnId), `occurred-at` (= occurredAt, RFC 3339 UTC), `traceparent` (W3C Trace Context of the originating request).\n\nDelivery is at-least-once: consumers MUST de-duplicate by `message_id`. Ordering across transactions is not guaranteed; use `occurredAt` and `ledgerTimestamp`.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "eventId",
+    "eventType",
+    "schemaVersion",
+    "occurredAt",
+    "txnId",
+    "senderWalletId",
+    "receiverWalletId",
+    "amount",
+    "fee",
+    "vat",
+    "commission",
+    "feeIncome",
+    "currency",
+    "ledgerTimestamp",
+    "failureCode"
+  ],
+  "properties": {
+    "eventId": {
+      "description": "Deterministic event id, equal to the AMQP message_id.",
+      "type": "string",
+      "format": "uuid"
+    },
+    "eventType": {
+      "type": "string",
+      "enum": ["SendMoneyCompleted", "SendMoneyFailed"]
+    },
+    "schemaVersion": {
+      "const": 1
+    },
+    "occurredAt": {
+      "description": "When the transaction reached its final status (UTC).",
+      "type": "string",
+      "format": "date-time"
+    },
+    "txnId": {
+      "type": "string",
+      "format": "uuid"
+    },
+    "senderWalletId": {
+      "$ref": "#/$defs/nonNegativeLong"
+    },
+    "receiverWalletId": {
+      "$ref": "#/$defs/nonNegativeLong"
+    },
+    "amount": {
+      "$ref": "#/$defs/nonNegativeLong"
+    },
+    "fee": {
+      "$ref": "#/$defs/nonNegativeLong"
+    },
+    "vat": {
+      "$ref": "#/$defs/nonNegativeLong"
+    },
+    "commission": {
+      "$ref": "#/$defs/nonNegativeLong"
+    },
+    "feeIncome": {
+      "description": "fee - vat - commission.",
+      "$ref": "#/$defs/nonNegativeLong"
+    },
+    "currency": {
+      "const": "BDT"
+    },
+    "ledgerTimestamp": {
+      "description": "TigerBeetle transfer timestamp (ns since the Unix epoch). Set for SendMoneyCompleted, null for SendMoneyFailed.",
+      "type": ["integer", "null"]
+    },
+    "failureCode": {
+      "description": "Reason for SendMoneyFailed; null for SendMoneyCompleted.",
+      "enum": [
+        "INSUFFICIENT_FUNDS",
+        "LIMIT_EXCEEDED",
+        "AMOUNT_OUT_OF_RANGE",
+        "SELF_TRANSFER",
+        "WALLET_NOT_FOUND",
+        "WALLET_INACTIVE",
+        "RECEIVER_NOT_ALLOWED",
+        "QUOTE_CHANGED",
+        "IDEMPOTENCY_CONFLICT",
+        "LEDGER_REJECTED",
+        null
+      ]
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "eventType": { "const": "SendMoneyCompleted" } }
+      },
+      "then": {
+        "properties": { "failureCode": { "type": "null" } }
+      }
+    },
+    {
+      "if": {
+        "properties": { "eventType": { "const": "SendMoneyFailed" } }
+      },
+      "then": {
+        "properties": {
+          "failureCode": { "type": "string" },
+          "ledgerTimestamp": { "type": "null" }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "nonNegativeLong": {
+      "type": "integer",
+      "minimum": 0,
+      "maximum": 9223372036854775807
+    }
+  },
+  "examples": [
+    {
+      "eventId": "3b0f6f0a-6a51-5d2e-8c1b-2f7e9d4a6c13",
+      "eventType": "SendMoneyCompleted",
+      "schemaVersion": 1,
+      "occurredAt": "2026-10-07T09:14:03.211Z",
+      "txnId": "0192f5a4-7c2e-7b1a-9d3e-5f4a2b1c0d00",
+      "senderWalletId": 42,
+      "receiverWalletId": 77,
+      "amount": 100000,
+      "fee": 500,
+      "vat": 65,
+      "commission": 87,
+      "feeIncome": 348,
+      "currency": "BDT",
+      "ledgerTimestamp": 1791350858928000000,
+      "failureCode": null
+    },
+    {
+      "eventId": "9d2c4e1b-7f30-5a8e-b6d4-1c3e5f7a9b02",
+      "eventType": "SendMoneyFailed",
+      "schemaVersion": 1,
+      "occurredAt": "2026-10-07T09:15:10.419Z",
+      "txnId": "0192f5a4-8d3f-7c2b-8e4f-6a5b3c2d1e00",
+      "senderWalletId": 42,
+      "receiverWalletId": 77,
+      "amount": 100000,
+      "fee": 500,
+      "vat": 65,
+      "commission": 87,
+      "feeIncome": 348,
+      "currency": "BDT",
+      "ledgerTimestamp": null,
+      "failureCode": "INSUFFICIENT_FUNDS"
+    }
+  ]
+}

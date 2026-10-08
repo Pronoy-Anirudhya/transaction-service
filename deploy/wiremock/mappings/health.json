@@ -1,0 +1,15 @@
+{
+  "name": "ledger: GET /actuator/health[/liveness|/readiness] -> 200 UP",
+  "priority": 10,
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/actuator/health(/(liveness|readiness))?"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "jsonBody": { "status": "UP" }
+  }
+}

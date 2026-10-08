@@ -35,3 +35,13 @@ out/
 
 ### VS Code ###
 .vscode/
+
+### Parallel agent builds ###
+build-*/
+.gradle-*/
+
+### Local env ###
+.env
+
+### jqwik ###
+.jqwik-database

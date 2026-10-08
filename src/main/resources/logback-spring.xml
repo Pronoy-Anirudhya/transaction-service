@@ -1,0 +1,38 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  JSON console logs (spec 12, P15) through Spring Boot structured logging, behind an AsyncAppender
+  so request threads never wait on console I/O.
+
+  - Format: logging.structured.format.console (ecs by default; logstash and gelf also work).
+  - MDC: every MDC entry is written as a JSON field, including txnId (LogConstants.MDC_TXN_ID) and
+    traceId / spanId (put into the MDC by Micrometer Tracing).
+  - Never log request or response bodies; MSISDNs are masked by the application (spec 12).
+-->
+<configuration>
+  <include resource="org/springframework/boot/logging/logback/defaults.xml"/>
+
+  <springProperty scope="context" name="CONSOLE_STRUCTURED_FORMAT"
+                  source="logging.structured.format.console" defaultValue="ecs"/>
+
+  <appender name="JSON_CONSOLE" class="ch.qos.logback.core.ConsoleAppender">
+    <encoder class="org.springframework.boot.logging.logback.StructuredLogEncoder">
+      <format>${CONSOLE_STRUCTURED_FORMAT}</format>
+      <charset>UTF-8</charset>
+    </encoder>
+  </appender>
+
+  <appender name="ASYNC_JSON_CONSOLE" class="ch.qos.logback.classic.AsyncAppender">
+    <!-- Large buffer; discard nothing until it is completely full, and never block the caller. -->
+    <queueSize>8192</queueSize>
+    <discardingThreshold>0</discardingThreshold>
+    <neverBlock>true</neverBlock>
+    <includeCallerData>false</includeCallerData>
+    <appender-ref ref="JSON_CONSOLE"/>
+  </appender>
+
+  <logger name="com.bracits.transactionservice" level="INFO"/>
+
+  <root level="INFO">
+    <appender-ref ref="ASYNC_JSON_CONSOLE"/>
+  </root>
+</configuration>
