@@ -2,7 +2,7 @@
 
 Send Money (wallet to wallet) service of the MFS POC v2. It validates the business rules, prices
 the fee / VAT / commission, enforces per-tier limits in PostgreSQL, posts all legs **atomically and
-synchronously** to `ledger-service` (TigerBeetle), returns the final status in the same HTTP
+synchronously** to the separate `ledger-service`, returns the final status in the same HTTP
 response, repairs in-doubt transactions, and publishes `SendMoneyCompleted` / `SendMoneyFailed`
 events to RabbitMQ after the outcome is committed. No 2PC, no outbox table.
 
@@ -13,7 +13,7 @@ events to RabbitMQ after the outcome is committed. No 2PC, no outbox table.
 - **Contracts:** [`openapi/transaction-api.yaml`](openapi/transaction-api.yaml) (OpenAPI 3.1, authoritative) and
   [`openapi/events/send-money-v1.schema.json`](openapi/events/send-money-v1.schema.json) (JSON Schema 2020-12 of the event payload).
 
-Stack: Java 25, Spring Boot 4.1.1, PostgreSQL 18, RabbitMQ 4.x, TigerBeetle 0.17.x (through `ledger-service`).
+Stack: Java 25, Spring Boot 4.1.1, PostgreSQL 18, RabbitMQ 4.x; money is posted by the separate `ledger-service`.
 
 ## Prerequisites
 
@@ -26,8 +26,9 @@ Stack: Java 25, Spring Boot 4.1.1, PostgreSQL 18, RabbitMQ 4.x, TigerBeetle 0.17
 ./gradlew clean build
 ```
 
-Integration tests use Testcontainers (PostgreSQL 18, RabbitMQ 4) and a WireMock ledger, so Docker
-must be running; without Docker those tests are skipped automatically and the unit tests still run.
+Integration tests use Testcontainers (PostgreSQL 18, RabbitMQ 4) and an in-test WireMock server that
+plays ledger-service, so Docker must be running; without Docker those tests are skipped automatically
+and the unit tests still run. No ledger-service or TigerBeetle is needed to build or test.
 
 The service needs these settings, which have **no default** in `application.properties` (NFR-09:
 no secrets in the repository): `TXN_DB_PASSWORD`, `RABBIT_USER`, `RABBIT_PASSWORD`,
@@ -35,49 +36,42 @@ no secrets in the repository): `TXN_DB_PASSWORD`, `RABBIT_USER`, `RABBIT_PASSWOR
 
 ## Run the stack
 
-### Standalone (default): WireMock ledger stub
+ledger-service is **not** part of this stack. It is a separate service (its own repository, Compose
+file and TigerBeetle) that you start on its own; transaction-service only needs its URL.
 
 ```bash
+# 1. Start ledger-service from its own repository (it publishes port 8081 by default).
+# 2. Start transaction-service with its PostgreSQL and RabbitMQ:
 docker compose up -d --build
 docker compose ps        # transaction-service becomes healthy after ~20-40 s
 ```
 
-Starts `postgres`, `rabbitmq`, `ledger-stub` (WireMock implementing the ledger wire contract) and
-`transaction-service` on <http://localhost:8080>. The stub always answers POSTED, except that a
-posting whose **principal leg amount is `2499999` or `99999999`** is rejected with
-`422 INSUFFICIENT_FUNDS`, so the failure path can be demonstrated. Its balance endpoint returns a
-fixed sample.
+transaction-service listens on <http://localhost:8080> and calls the ledger at `LEDGER_BASE_URL`,
+by default `http://host.docker.internal:8081` (the ledger published on this host). Point it
+elsewhere in `.env`, e.g. `LEDGER_BASE_URL=http://ledger.internal:8081`. Stop with
+`docker compose down` (add `-v` to wipe PostgreSQL and RabbitMQ data).
 
-### Full: real `ledger-service` + TigerBeetle
+Running outside Docker (`./gradlew bootRun` with the required settings) defaults to
+`http://localhost:8081`.
 
-Needs the sibling checkout `../ledger-service` (it provides its own `Dockerfile`).
+### When ledger-service is unavailable
 
-```bash
-docker compose down                                         # if the default stack is running
-docker compose --profile init run --rm tigerbeetle-format   # once: creates the TigerBeetle data file
-docker compose --profile full up -d --build
-```
+transaction-service starts and stays ready without the ledger. It probes the ledger's
+`GET /actuator/health/readiness` every `poc.ledger.health-interval` (2 s) and, while the ledger is
+down, answers ledger-dependent requests at once instead of hanging:
 
-`--profile full` starts `tigerbeetle` and `ledger-service` **instead of** the stub. Stop it with
-`docker compose --profile full down`. To wipe all data (PostgreSQL, RabbitMQ, TigerBeetle):
-`docker compose --profile full down -v` (then format TigerBeetle again).
-
-### Ledger: stub or real
-
-transaction-service always calls `http://ledger:8081` (`LEDGER_BASE_URL`). `ledger` is a Compose
-network alias held by whichever ledger runs:
-
-| Command | Ledger container holding the alias `ledger` |
+| Request | While ledger-service is down |
 | --- | --- |
-| `docker compose up` | `ledger-stub` (WireMock) |
-| `docker compose --profile full up` | `ledger-service` (TigerBeetle-backed) |
+| `POST /api/v1/send-money` | `503` + `Retry-After: 1`, `code: LEDGER_UNAVAILABLE`. Checked after validation and before any write: no row, no limit reserved, no money moved. A replay of an earlier request still returns its stored result. |
+| `POST /api/v1/wallets`, `…/fund`, `…/balance`, `GET /api/v1/admin/reconciliation` | `503` + `Retry-After: 1`, `code: LEDGER_UNAVAILABLE` |
+| `POST /api/v1/send-money/quote`, `GET /api/v1/send-money/{txnId}` | Work normally (no ledger needed) |
+| Repair worker | Pauses; in-doubt transactions are resolved once the ledger is back |
 
-The stub declares `profiles: [""]`. Compose enables a service with the empty profile only while no
-profile is active, so the stub runs by default and drops out as soon as `--profile full` (or
-`--profile init`) is given, with no `.env` file needed. Both ledgers hold the same alias, so never
-run both: always `docker compose down` before switching modes (a stub container left running from
-the default mode would share the `ledger` alias). `docker compose --profile full config --services`
-shows what will run.
+If the ledger drops **during** a transfer (after the row was recorded), the answer is `202`
+`PROCESSING` with a `message` explaining that the ledger has not confirmed it yet; the repair worker
+completes or fails it automatically, and `GET /api/v1/send-money/{txnId}` shows the outcome.
+`GET /actuator/health` lists a `ledger` component (`UP` / `DOWN`); readiness depends on PostgreSQL
+only, so a ledger outage never takes the instance out of rotation.
 
 ### Credentials
 
@@ -154,20 +148,18 @@ curl -s $API/api/v1/send-money/<txnId> -H "$KEY"
 # 6. Balance (posted 399500 after funding 500000 and sending 100500)
 curl -s $API/api/v1/wallets/01711000001/balance -H "$KEY"
 
-# 7. Failure demo with the stub ledger: 24,999.99 BDT -> 422 INSUFFICIENT_FUNDS (with txnId)
+# 7. Failure demo: send more than the remaining balance -> 422 INSUFFICIENT_FUNDS (with txnId)
 curl -s -i -X POST $API/api/v1/send-money -H "$KEY" -H "$JSON" \
   -H 'Idempotency-Key: demo-insufficient-1' \
   -d '{"senderMsisdn":"01711000001","receiverMsisdn":"01811000002","amount":2499999,"currency":"BDT"}'
 
-# 8. Reconciliation of the last hour (UTC). The WireMock stub keeps no state, so its posting look-up always
-#    answers NOT_FOUND: every COMPLETED row is reported as ALERT_RAISED and nothing is changed. Run it with
-#    the full profile (real ledger-service) to see real results, including the "ledger wins" flip.
+# 8. Reconciliation of the last hour (UTC): records compared with the ledger's postings
 curl -s "$API/api/v1/admin/reconciliation?from=$(date -u -v-1H +%FT%TZ 2>/dev/null || date -u -d '-1 hour' +%FT%TZ)&to=$(date -u +%FT%TZ)" -H "$KEY"
 ```
 
 Events land in the demo queue `audit.send-money` (RabbitMQ management UI → Queues → Get messages).
 
-## Ledger wire contract (used by the client and the stub)
+## Ledger wire contract (used by the ledger client)
 
 Authoritative contract: `../ledger-service/openapi/ledger-api.yaml` (spec 7.2). Summary:
 
@@ -177,8 +169,8 @@ Authoritative contract: `../ledger-service/openapi/ledger-api.yaml` (spec 7.2). 
 | `GET /internal/v1/postings/{postingId}?legs=n` | 200 `{postingId, status:"POSTED", timestamp}` (ledger timestamp in ns) or `{postingId, status:"NOT_FOUND"}` |
 | `POST /internal/v1/accounts` `{accountId, code, flags, userData64}` | 201 `{accountId, status:"CREATED"}` · 200 `EXISTS` (identical) · 409 `ACCOUNT_CONFLICT` |
 | `GET /internal/v1/accounts/{id}/balance` | 200 `{accountId, debitsPosted, creditsPosted, debitsPending, creditsPending, available}` · 404 |
-| `POST /internal/v1/fundings` `{fundingId, accountId, amount}` *(ledger profile `test`)* | 200 `{postingId, status:"POSTED", replay, timestamp}` (the stub also echoes `fundingId`) · 422 `ACCOUNT_NOT_FOUND` |
-| `GET /actuator/health/readiness` | 200 when TigerBeetle is reachable |
+| `POST /internal/v1/fundings` `{fundingId, accountId, amount}` *(ledger profile `test`)* | 200 `{postingId, status:"POSTED", replay, timestamp}` · 422 `ACCOUNT_NOT_FOUND` |
+| `GET /actuator/health/readiness` | 200 when ledger-service is ready (probed for `LEDGER_UNAVAILABLE`) |
 
 ## Configuration
 
@@ -191,7 +183,8 @@ Environment variables override the container defaults.
 | `spring.datasource.password` | — (required) | `TXN_DB_PASSWORD` | DB password |
 | `spring.datasource.hikari.maximum-pool-size` | `20` | | P6: fixed pool, `connection-timeout` 250 ms |
 | `spring.rabbitmq.host` / `username` / `password` | `rabbitmq` / — / — | `RABBIT_HOST`, `RABBIT_USER`, `RABBIT_PASSWORD` | Broker |
-| `poc.ledger.base-url` | `http://ledger:8081` | `LEDGER_BASE_URL` | Ledger (spec 12 uses HAProxy `http://haproxy:8090`) |
+| `poc.ledger.base-url` | `http://localhost:8081` (Compose: `http://host.docker.internal:8081`) | `LEDGER_BASE_URL` | The separately run ledger-service (spec 12 uses HAProxy `http://haproxy:8090`) |
+| `poc.ledger.health-interval` | `2s` | | Ledger readiness probe → `503 LEDGER_UNAVAILABLE` while down |
 | `poc.ledger.connect-timeout` / `read-timeout` / `total-budget` | `100ms` / `1200ms` / `3s` | | Deadline hierarchy (spec 8.3) |
 | `poc.ledger.max-retries`, `poc.ledger.retry.*` | `2`; `50ms`, ×`2`, `20ms` jitter | | Retry on 503 / I/O / timeout only |
 | `poc.ledger.concurrency-limit` | `512` | | Ledger bulkhead (P10) |
@@ -205,8 +198,9 @@ Environment variables override the container defaults.
 | `poc.reconciliation.max-rows` / `parallelism` | `10000` / `16` | | Reconciliation (FR-08) |
 | `SPRING_PROFILES_ACTIVE` | `test` in Compose | | `test` enables register / fund wallet |
 
-Operations: `/actuator/health/liveness`, `/actuator/health/readiness` (PostgreSQL only; a RabbitMQ
-outage never blocks money, F9), `/actuator/prometheus`. Logs are JSON (ECS) on the console through
+Operations: `/actuator/health` (components `db`, `rabbit`, `ledger`), `/actuator/health/liveness`,
+`/actuator/health/readiness` (PostgreSQL only; neither a RabbitMQ outage (F9) nor a ledger outage
+takes the instance out of rotation), `/actuator/prometheus`. Logs are JSON (ECS) on the console through
 an async appender, with `txnId` and `traceId` from the MDC. Traces are exported over OTLP when
 `MANAGEMENT_OPENTELEMETRY_TRACING_EXPORT_OTLP_ENDPOINT` is set.
 
