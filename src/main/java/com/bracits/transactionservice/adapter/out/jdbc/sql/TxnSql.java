@@ -1,9 +1,10 @@
 package com.bracits.transactionservice.adapter.out.jdbc.sql;
 
 /**
- * SQL of {@code JdbcTxnRepository}. One statement per repository method. Status predicates are literals (not
- * parameters) so that the planner can always match the partial indexes {@code smt_in_doubt} and
- * {@code smt_unpublished}. Durations are bound as milliseconds ({@code :xMs * interval '1 millisecond'}).
+ * SQL of {@code JdbcTxnRepository}. One statement per repository method. Status predicates are
+ * literals (not parameters) so that the planner can always match the partial indexes
+ * {@code smt_in_doubt} and {@code smt_unpublished}. Durations are bound as milliseconds
+ * ({@code :xMs * interval '1 millisecond'}).
  */
 public final class TxnSql {
 
@@ -14,7 +15,9 @@ public final class TxnSql {
         FROM send_money_txn
       """;
 
-  /** DB transaction #1, step 1 (spec 5). Empty result = duplicate (sender, Idempotency-Key). */
+  /**
+   * DB transaction #1, step 1 (spec 5). Empty result = duplicate (sender, Idempotency-Key).
+   */
   public static final String INSERT_IF_ABSENT = """
       INSERT INTO send_money_txn (txn_id, client_ref, request_hash, sender_wallet_id, receiver_wallet_id, amount,
                                   fee, vat, commission, fee_income, currency, reference, business_date,
@@ -34,7 +37,9 @@ public final class TxnSql {
        WHERE txn_id = :txnId
       """;
 
-  /** POSTED: compare-and-set INITIATED -> COMPLETED (spec 5 step 8). */
+  /**
+   * POSTED: compare-and-set INITIATED -> COMPLETED (spec 5 step 8).
+   */
   public static final String MARK_COMPLETED = """
       UPDATE send_money_txn SET status = 'COMPLETED', ledger_ts = :ledgerTs, completed_at = now()
        WHERE txn_id = :txnId AND status = 'INITIATED'
@@ -42,9 +47,9 @@ public final class TxnSql {
       """;
 
   /**
-   * REJECTED: spec 6.1 "mark FAILED and release in one round trip" verbatim; {@code t} returns the whole row and a
-   * final {@code SELECT} hands it back. The release only subtracts from counters that still belong to the
-   * transaction's day / month.
+   * REJECTED: spec 6.1 "mark FAILED and release in one round trip" verbatim; {@code t} returns the
+   * whole row and a final {@code SELECT} hands it back. The release only subtracts from counters
+   * that still belong to the transaction's day / month.
    */
   public static final String MARK_FAILED_AND_RELEASE_LIMITS = """
       WITH t AS (
@@ -63,8 +68,9 @@ public final class TxnSql {
       """;
 
   /**
-   * "Ledger wins" (spec 8.5): compare-and-set FAILED -> COMPLETED and re-count the limit usage; the exact mirror of
-   * {@link #MARK_FAILED_AND_RELEASE_LIMITS} (only counters of the transaction's day / month are touched).
+   * "Ledger wins" (spec 8.5): compare-and-set FAILED -> COMPLETED and re-count the limit usage; the
+   * exact mirror of {@link #MARK_FAILED_AND_RELEASE_LIMITS} (only counters of the transaction's day
+   * / month are touched).
    */
   public static final String MARK_FAILED_AS_COMPLETED = """
       WITH t AS (
@@ -83,7 +89,9 @@ public final class TxnSql {
       SELECT * FROM t
       """;
 
-  /** UNKNOWN outcome: push the recheck and count the attempt (CAS on INITIATED). */
+  /**
+   * UNKNOWN outcome: push the recheck and count the attempt (CAS on INITIATED).
+   */
   public static final String SCHEDULE_RECHECK = """
       UPDATE send_money_txn
          SET next_check_at = now() + :delayMs * interval '1 millisecond',
@@ -91,7 +99,10 @@ public final class TxnSql {
        WHERE txn_id = :txnId AND status = 'INITIATED'
       """;
 
-  /** Repair claim (spec 8.4): select in-doubt rows, lease them, return them; one auto-commit statement. */
+  /**
+   * Repair claim (spec 8.4): select in-doubt rows, lease them, return them; one auto-commit
+   * statement.
+   */
   public static final String CLAIM_IN_DOUBT = """
       WITH c AS (
         SELECT txn_id FROM send_money_txn
@@ -106,7 +117,10 @@ public final class TxnSql {
       RETURNING t.*
       """;
 
-  /** Republisher claim (spec 9 rule 6), lease pattern of 8.4 on {@code next_check_at}; one auto-commit statement. */
+  /**
+   * Republisher claim (spec 9 rule 6), lease pattern of 8.4 on {@code next_check_at}; one
+   * auto-commit statement.
+   */
   public static final String CLAIM_UNPUBLISHED = """
       WITH c AS (
         SELECT txn_id FROM send_money_txn
@@ -122,7 +136,9 @@ public final class TxnSql {
       RETURNING t.*
       """;
 
-  /** Losing the publish mark only causes a harmless republish (spec 9 rule 4). */
+  /**
+   * Losing the publish mark only causes a harmless republish (spec 9 rule 4).
+   */
   public static final String SET_LOCAL_SYNCHRONOUS_COMMIT_OFF = """
       SET LOCAL synchronous_commit = off
       """;
@@ -132,19 +148,25 @@ public final class TxnSql {
        WHERE txn_id = ANY(:txnIds) AND event_published_at IS NULL
       """;
 
-  /** Reconciliation window scan by primary key; txnIds are time-ordered (spec 6.3). */
+  /**
+   * Reconciliation window scan by primary key; txnIds are time-ordered (spec 6.3).
+   */
   public static final String FIND_BY_TXN_ID_RANGE = SELECT_COLUMNS + """
        WHERE txn_id >= :fromTxnId AND txn_id < :toTxnId
        ORDER BY txn_id
        LIMIT :limit
       """;
 
-  /** Gauge {@code txn_in_doubt}; answered from the partial index {@code smt_in_doubt}. */
+  /**
+   * Gauge {@code txn_in_doubt}; answered from the partial index {@code smt_in_doubt}.
+   */
   public static final String COUNT_IN_DOUBT = """
       SELECT count(*) FROM send_money_txn WHERE status = 'INITIATED'
       """;
 
-  /** Gauge {@code events_unpublished}; answered from the partial index {@code smt_unpublished}. */
+  /**
+   * Gauge {@code events_unpublished}; answered from the partial index {@code smt_unpublished}.
+   */
   public static final String COUNT_UNPUBLISHED = """
       SELECT count(*) FROM send_money_txn WHERE status <> 'INITIATED' AND event_published_at IS NULL
       """;

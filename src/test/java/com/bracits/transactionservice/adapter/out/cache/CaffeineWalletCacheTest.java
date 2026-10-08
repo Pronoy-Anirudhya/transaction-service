@@ -1,12 +1,12 @@
 package com.bracits.transactionservice.adapter.out.cache;
 
-import com.bracits.transactionservice.domain.wallet.NewWallet;
-import com.bracits.transactionservice.domain.wallet.Wallet;
-import com.bracits.transactionservice.domain.wallet.WalletStatus;
-import com.bracits.transactionservice.domain.wallet.WalletType;
-import com.bracits.transactionservice.port.out.WalletRepository;
-import org.junit.jupiter.api.Test;
+import static org.assertj.core.api.Assertions.assertThat;
 
+import com.bracits.transactionservice.domain.wallet.enums.WalletStatus;
+import com.bracits.transactionservice.domain.wallet.enums.WalletType;
+import com.bracits.transactionservice.domain.wallet.model.NewWallet;
+import com.bracits.transactionservice.domain.wallet.model.Wallet;
+import com.bracits.transactionservice.port.out.repository.WalletRepository;
 import java.time.Duration;
 import java.time.LocalDate;
 import java.util.HashMap;
@@ -14,8 +14,7 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicInteger;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 class CaffeineWalletCacheTest {
 
@@ -66,12 +65,15 @@ class CaffeineWalletCacheTest {
     assertThat(cache.findById(wallet.walletId())).contains(wallet);
     assertThat(db.idReads.get()).isEqualTo(2);
 
-    NewWallet fresh = new NewWallet("01711000002", "B", WalletType.CUSTOMER, WalletStatus.ACTIVE, 1, UUID.randomUUID());
+    NewWallet fresh = new NewWallet("01711000002", "B", WalletType.CUSTOMER, WalletStatus.ACTIVE, 1,
+        UUID.randomUUID());
     assertThat(cache.insertIfAbsent(fresh, LocalDate.of(2026, 10, 8))).isPresent();
     assertThat(db.inserts.get()).isEqualTo(1);
   }
 
-  /** In-memory fake of the JDBC repository that counts calls. */
+  /**
+   * In-memory fake of the JDBC repository that counts calls.
+   */
   private static final class InMemoryWallets implements WalletRepository {
 
     private final Map<String, Wallet> byMsisdn = new HashMap<>();
@@ -80,7 +82,8 @@ class CaffeineWalletCacheTest {
     private final AtomicInteger inserts = new AtomicInteger();
 
     Wallet add(String msisdn) {
-      Wallet wallet = new Wallet(byMsisdn.size() + 1L, msisdn, "Holder", WalletType.CUSTOMER, WalletStatus.ACTIVE, 1,
+      Wallet wallet = new Wallet(byMsisdn.size() + 1L, msisdn, "Holder", WalletType.CUSTOMER,
+          WalletStatus.ACTIVE, 1,
           UUID.randomUUID());
       byMsisdn.put(msisdn, wallet);
       return wallet;

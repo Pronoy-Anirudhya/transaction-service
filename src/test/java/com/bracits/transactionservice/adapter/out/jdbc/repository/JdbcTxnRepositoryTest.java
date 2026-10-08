@@ -1,17 +1,15 @@
-package com.bracits.transactionservice.adapter.out.jdbc;
+package com.bracits.transactionservice.adapter.out.jdbc.repository;
 
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.Pricing;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.limit.LimitReservation;
-import com.bracits.transactionservice.domain.txn.NewSendMoneyTxn;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import com.bracits.transactionservice.domain.wallet.Wallet;
-import org.junit.jupiter.api.BeforeEach;
-import org.junit.jupiter.api.Nested;
-import org.junit.jupiter.api.Test;
-import org.testcontainers.junit.jupiter.Testcontainers;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.within;
 
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.limit.model.LimitReservation;
+import com.bracits.transactionservice.domain.model.Pricing;
+import com.bracits.transactionservice.domain.txn.model.NewSendMoneyTxn;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import com.bracits.transactionservice.domain.wallet.model.Wallet;
 import java.time.Duration;
 import java.time.Instant;
 import java.time.LocalDate;
@@ -20,9 +18,10 @@ import java.util.List;
 import java.util.OptionalLong;
 import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.within;
+import org.junit.jupiter.api.BeforeEach;
+import org.junit.jupiter.api.Nested;
+import org.junit.jupiter.api.Test;
+import org.testcontainers.junit.jupiter.Testcontainers;
 
 @Testcontainers(disabledWithoutDocker = true)
 class JdbcTxnRepositoryTest extends PostgresTestSupport {
@@ -43,23 +42,31 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
     receiver = insertWallet(D);
   }
 
-  /** DB transaction #1: insert + reserve, committed. */
+  /**
+   * DB transaction #1: insert + reserve, committed.
+   */
   private NewSendMoneyTxn initiate(long amount, LocalDate businessDate) {
-    NewSendMoneyTxn txn = newTxn(sender.walletId(), receiver.walletId(), "ref-" + ++refSeq, amount, businessDate);
+    NewSendMoneyTxn txn = newTxn(sender.walletId(), receiver.walletId(), "ref-" + ++refSeq, amount,
+        businessDate);
+
     tx.executeWithoutResult(status -> {
       assertThat(txns.insertIfAbsent(txn)).contains(txn.txnId());
-      assertThat(limits.reserve(new LimitReservation(sender.walletId(), businessDate, amount, TIER1))).isTrue();
+      assertThat(limits.reserve(
+          new LimitReservation(sender.walletId(), businessDate, amount, TIER1))).isTrue();
     });
+
     return txn;
   }
 
   private static void backdateCreated(UUID txnId) {
-    jdbc.sql("UPDATE send_money_txn SET created_at = created_at - interval '1 minute' WHERE txn_id = :id")
+    jdbc.sql(
+            "UPDATE send_money_txn SET created_at = created_at - interval '1 minute' WHERE txn_id = :id")
         .param("id", txnId).update();
   }
 
   private static void backdateCompleted(UUID txnId) {
-    jdbc.sql("UPDATE send_money_txn SET completed_at = completed_at - interval '1 minute' WHERE txn_id = :id")
+    jdbc.sql(
+            "UPDATE send_money_txn SET completed_at = completed_at - interval '1 minute' WHERE txn_id = :id")
         .param("id", txnId).update();
   }
 
@@ -97,7 +104,8 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
     void storesTheOptionalReference() {
       NewSendMoneyTxn base = newTxn(sender.walletId(), receiver.walletId(), "k-ref", 100_000L, D);
       NewSendMoneyTxn txn = new NewSendMoneyTxn(base.txnId(), base.clientRef(), base.requestHash(),
-          base.senderWalletId(), base.receiverWalletId(), base.amount(), base.pricing(), base.currency(), "rent", D);
+          base.senderWalletId(), base.receiverWalletId(), base.amount(), base.pricing(),
+          base.currency(), "rent", D);
 
       txns.insertIfAbsent(txn);
 
@@ -130,8 +138,10 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
       assertThat(done.status()).isEqualTo(TxnStatus.COMPLETED);
       assertThat(done.ledgerTimestamp()).hasValue(LEDGER_TS);
       assertThat(done.completedAt()).isPresent();
+
       assertThat(txns.markCompleted(txn.txnId(), LEDGER_TS)).isEmpty();
-      assertThat(txns.markFailedAndReleaseLimits(txn.txnId(), FailureCode.INSUFFICIENT_FUNDS)).isEmpty();
+      assertThat(
+          txns.markFailedAndReleaseLimits(txn.txnId(), FailureCode.INSUFFICIENT_FUNDS)).isEmpty();
       assertThat(usage(sender.walletId())).isEqualTo(new Usage(D, 100_000L, 1, OCT, 100_000L, 1));
     }
 
@@ -140,13 +150,16 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
       NewSendMoneyTxn kept = initiate(70_000L, D);
       NewSendMoneyTxn failed = initiate(100_000L, D);
 
-      SendMoneyTxn row = txns.markFailedAndReleaseLimits(failed.txnId(), FailureCode.INSUFFICIENT_FUNDS).orElseThrow();
+      SendMoneyTxn row = txns.markFailedAndReleaseLimits(failed.txnId(),
+          FailureCode.INSUFFICIENT_FUNDS).orElseThrow();
 
       assertThat(row.status()).isEqualTo(TxnStatus.FAILED);
       assertThat(row.failureCode()).contains(FailureCode.INSUFFICIENT_FUNDS);
       assertThat(row.completedAt()).isPresent();
       assertThat(usage(sender.walletId())).isEqualTo(new Usage(D, 70_000L, 1, OCT, 70_000L, 1));
-      assertThat(txns.markFailedAndReleaseLimits(failed.txnId(), FailureCode.INSUFFICIENT_FUNDS)).isEmpty();
+
+      assertThat(txns.markFailedAndReleaseLimits(failed.txnId(),
+          FailureCode.INSUFFICIENT_FUNDS)).isEmpty();
       assertThat(usage(sender.walletId())).isEqualTo(new Usage(D, 70_000L, 1, OCT, 70_000L, 1));
       assertThat(txns.findById(kept.txnId()).orElseThrow().status()).isEqualTo(TxnStatus.INITIATED);
     }
@@ -156,9 +169,11 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
       NewSendMoneyTxn yesterday = initiate(100_000L, D);
       initiate(30_000L, D.plusDays(1)); // usage row moves to the next day
 
-      txns.markFailedAndReleaseLimits(yesterday.txnId(), FailureCode.INSUFFICIENT_FUNDS).orElseThrow();
+      txns.markFailedAndReleaseLimits(yesterday.txnId(), FailureCode.INSUFFICIENT_FUNDS)
+          .orElseThrow();
 
-      assertThat(usage(sender.walletId())).isEqualTo(new Usage(D.plusDays(1), 30_000L, 1, OCT, 30_000L, 1));
+      assertThat(usage(sender.walletId())).isEqualTo(
+          new Usage(D.plusDays(1), 30_000L, 1, OCT, 30_000L, 1));
     }
 
     @Test
@@ -168,7 +183,8 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
       NewSendMoneyTxn october = initiate(100_000L, lastDay);
       initiate(30_000L, nov);
 
-      txns.markFailedAndReleaseLimits(october.txnId(), FailureCode.INSUFFICIENT_FUNDS).orElseThrow();
+      txns.markFailedAndReleaseLimits(october.txnId(), FailureCode.INSUFFICIENT_FUNDS)
+          .orElseThrow();
 
       assertThat(usage(sender.walletId())).isEqualTo(new Usage(nov, 30_000L, 1, nov, 30_000L, 1));
     }
@@ -178,9 +194,12 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
       NewSendMoneyTxn txn = initiate(100_000L, D);
       txns.markFailedAndReleaseLimits(txn.txnId(), FailureCode.INSUFFICIENT_FUNDS).orElseThrow();
       txns.markEventsPublished(List.of(txn.txnId()));
-      assertThat(txns.markFailedAsCompleted(UUID.randomUUID(), OptionalLong.of(LEDGER_TS))).isEmpty();
 
-      SendMoneyTxn row = txns.markFailedAsCompleted(txn.txnId(), OptionalLong.of(LEDGER_TS)).orElseThrow();
+      assertThat(
+          txns.markFailedAsCompleted(UUID.randomUUID(), OptionalLong.of(LEDGER_TS))).isEmpty();
+
+      SendMoneyTxn row = txns.markFailedAsCompleted(txn.txnId(), OptionalLong.of(LEDGER_TS))
+          .orElseThrow();
 
       assertThat(row.status()).isEqualTo(TxnStatus.COMPLETED);
       assertThat(row.failureCode()).isEmpty();
@@ -188,6 +207,7 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
       assertThat(row.completedAt()).isPresent();
       assertThat(row.eventPublishedAt()).isEmpty();
       assertThat(usage(sender.walletId())).isEqualTo(new Usage(D, 100_000L, 1, OCT, 100_000L, 1));
+
       assertThat(txns.markFailedAsCompleted(txn.txnId(), OptionalLong.of(LEDGER_TS))).isEmpty();
       assertThat(usage(sender.walletId())).isEqualTo(new Usage(D, 100_000L, 1, OCT, 100_000L, 1));
     }
@@ -197,7 +217,8 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
       NewSendMoneyTxn txn = initiate(100_000L, D);
       txns.markFailedAndReleaseLimits(txn.txnId(), FailureCode.LEDGER_REJECTED).orElseThrow();
 
-      SendMoneyTxn row = txns.markFailedAsCompleted(txn.txnId(), OptionalLong.empty()).orElseThrow();
+      SendMoneyTxn row = txns.markFailedAsCompleted(txn.txnId(), OptionalLong.empty())
+          .orElseThrow();
 
       assertThat(row.status()).isEqualTo(TxnStatus.COMPLETED);
       assertThat(row.ledgerTimestamp()).isEmpty();
@@ -211,7 +232,8 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
 
       txns.markFailedAsCompleted(txn.txnId(), OptionalLong.of(LEDGER_TS)).orElseThrow();
 
-      assertThat(usage(sender.walletId())).isEqualTo(new Usage(D.plusDays(1), 30_000L, 1, OCT, 130_000L, 2));
+      assertThat(usage(sender.walletId())).isEqualTo(
+          new Usage(D.plusDays(1), 30_000L, 1, OCT, 130_000L, 2));
     }
 
     @Test
@@ -236,7 +258,8 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
 
       SendMoneyTxn row = txns.findById(txn.txnId()).orElseThrow();
       assertThat(row.ledgerAttempts()).isEqualTo(2);
-      assertThat(row.nextCheckAt().orElseThrow()).isCloseTo(before.plusSeconds(2), within(3, ChronoUnit.SECONDS));
+      assertThat(row.nextCheckAt().orElseThrow()).isCloseTo(before.plusSeconds(2),
+          within(3, ChronoUnit.SECONDS));
 
       txns.markCompleted(txn.txnId(), LEDGER_TS);
       assertThat(txns.scheduleRecheck(txn.txnId(), Duration.ofSeconds(2))).isFalse();
@@ -334,7 +357,8 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
 
       List.of(completed, failed, inFlight).forEach(t -> backdateCompleted(t.txnId()));
       assertThat(txns.claimUnpublished(10, Duration.ofSeconds(10), LEASE))
-          .extracting(SendMoneyTxn::txnId).containsExactlyInAnyOrder(completed.txnId(), failed.txnId());
+          .extracting(SendMoneyTxn::txnId)
+          .containsExactlyInAnyOrder(completed.txnId(), failed.txnId());
       assertThat(txns.claimUnpublished(10, Duration.ofSeconds(10), LEASE)).isEmpty(); // leased
 
       assertThat(txns.markEventsPublished(List.of(completed.txnId(), failed.txnId()))).isEqualTo(2);
@@ -368,10 +392,13 @@ class JdbcTxnRepositoryTest extends PostgresTestSupport {
     @Test
     void findByTxnIdRangeScansInPrimaryKeyOrder() {
       List<UUID> ids = List.of(timeOrdered(1), timeOrdered(2), timeOrdered(3), timeOrdered(4));
+
       for (UUID id : ids.reversed()) {
-        NewSendMoneyTxn base = newTxn(sender.walletId(), receiver.walletId(), "range-" + id, 1_000L, D);
-        txns.insertIfAbsent(new NewSendMoneyTxn(id, base.clientRef(), base.requestHash(), base.senderWalletId(),
-            base.receiverWalletId(), base.amount(), base.pricing(), base.currency(), null, D));
+        NewSendMoneyTxn base = newTxn(sender.walletId(), receiver.walletId(), "range-" + id, 1_000L,
+            D);
+        txns.insertIfAbsent(
+            new NewSendMoneyTxn(id, base.clientRef(), base.requestHash(), base.senderWalletId(),
+                base.receiverWalletId(), base.amount(), base.pricing(), base.currency(), null, D));
       }
 
       assertThat(txns.findByTxnIdRange(ids.get(1), ids.get(3), 10))

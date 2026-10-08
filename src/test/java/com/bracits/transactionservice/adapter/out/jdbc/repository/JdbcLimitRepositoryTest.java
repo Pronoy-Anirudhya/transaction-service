@@ -1,15 +1,14 @@
-package com.bracits.transactionservice.adapter.out.jdbc;
+package com.bracits.transactionservice.adapter.out.jdbc.repository;
 
-import com.bracits.transactionservice.domain.limit.LimitReservation;
-import com.bracits.transactionservice.domain.txn.NewSendMoneyTxn;
-import com.bracits.transactionservice.domain.wallet.Wallet;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.bracits.transactionservice.domain.limit.model.LimitReservation;
+import com.bracits.transactionservice.domain.txn.model.NewSendMoneyTxn;
+import com.bracits.transactionservice.domain.wallet.model.Wallet;
+import java.time.LocalDate;
 import org.junit.jupiter.api.BeforeEach;
 import org.junit.jupiter.api.Test;
 import org.testcontainers.junit.jupiter.Testcontainers;
-
-import java.time.LocalDate;
-
-import static org.assertj.core.api.Assertions.assertThat;
 
 @Testcontainers(disabledWithoutDocker = true)
 class JdbcLimitRepositoryTest extends PostgresTestSupport {
@@ -92,7 +91,8 @@ class JdbcLimitRepositoryTest extends PostgresTestSupport {
   @Test
   void monthRolloverResetsDailyAndMonthlyCountersInPlace() {
     setUsage(sender.walletId(),
-        new Usage(LocalDate.of(2026, 9, 30), 5_000_000L, 50, LocalDate.of(2026, 9, 1), 30_000_000L, 200));
+        new Usage(LocalDate.of(2026, 9, 30), 5_000_000L, 50, LocalDate.of(2026, 9, 1), 30_000_000L,
+            200));
 
     assertThat(reserve(OCT, 100_000L)).isTrue();
     assertThat(usage(sender.walletId())).isEqualTo(new Usage(OCT, 100_000L, 1, OCT, 100_000L, 1));

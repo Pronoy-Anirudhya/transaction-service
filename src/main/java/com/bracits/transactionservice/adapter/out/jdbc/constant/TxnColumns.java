@@ -1,6 +1,8 @@
-package com.bracits.transactionservice.adapter.out.jdbc.sql;
+package com.bracits.transactionservice.adapter.out.jdbc.constant;
 
-/** Column names of {@code send_money_txn}. */
+/**
+ * Column names of {@code send_money_txn}.
+ */
 public final class TxnColumns {
 
   public static final String TXN_ID = "txn_id";

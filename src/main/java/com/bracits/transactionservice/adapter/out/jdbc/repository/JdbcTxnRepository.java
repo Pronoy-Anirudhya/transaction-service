@@ -1,16 +1,12 @@
-package com.bracits.transactionservice.adapter.out.jdbc;
+package com.bracits.transactionservice.adapter.out.jdbc.repository;
 
 import com.bracits.transactionservice.adapter.out.jdbc.mapper.TxnParamMapper;
 import com.bracits.transactionservice.adapter.out.jdbc.mapper.TxnRowMapper;
 import com.bracits.transactionservice.adapter.out.jdbc.sql.TxnSql;
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.txn.NewSendMoneyTxn;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import com.bracits.transactionservice.port.out.TxnRepository;
-import org.springframework.jdbc.core.simple.JdbcClient;
-import org.springframework.stereotype.Component;
-import org.springframework.transaction.support.TransactionOperations;
-
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.txn.model.NewSendMoneyTxn;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import com.bracits.transactionservice.port.out.repository.TxnRepository;
 import java.time.Duration;
 import java.util.Collection;
 import java.util.List;
@@ -18,10 +14,14 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
+import org.springframework.jdbc.core.simple.JdbcClient;
+import org.springframework.stereotype.Component;
+import org.springframework.transaction.support.TransactionOperations;
 
 /**
- * {@code send_money_txn} over {@link JdbcClient}; one SQL statement per method (the publish mark adds a
- * {@code SET LOCAL} in its own short transaction). Finalising updates are compare-and-set on {@code status}.
+ * {@code send_money_txn} over {@link JdbcClient}; one SQL statement per method (the publish mark
+ * adds a {@code SET LOCAL} in its own short transaction). Finalising updates are compare-and-set on
+ * {@code status}.
  */
 @Component
 public final class JdbcTxnRepository implements TxnRepository {
@@ -32,7 +32,8 @@ public final class JdbcTxnRepository implements TxnRepository {
   private final TxnParamMapper paramMapper;
 
   public JdbcTxnRepository(
-      JdbcClient jdbc, TransactionOperations transactions, TxnRowMapper rowMapper, TxnParamMapper paramMapper) {
+      JdbcClient jdbc, TransactionOperations transactions, TxnRowMapper rowMapper,
+      TxnParamMapper paramMapper) {
     this.jdbc = jdbc;
     this.transactions = transactions;
     this.rowMapper = rowMapper;
@@ -41,12 +42,14 @@ public final class JdbcTxnRepository implements TxnRepository {
 
   @Override
   public Optional<UUID> insertIfAbsent(NewSendMoneyTxn txn) {
-    return jdbc.sql(TxnSql.INSERT_IF_ABSENT).params(paramMapper.insert(txn)).query(UUID.class).optional();
+    return jdbc.sql(TxnSql.INSERT_IF_ABSENT).params(paramMapper.insert(txn)).query(UUID.class)
+        .optional();
   }
 
   @Override
   public Optional<SendMoneyTxn> findBySenderAndClientRef(long senderWalletId, String clientRef) {
-    return queryOne(TxnSql.FIND_BY_SENDER_AND_CLIENT_REF, paramMapper.bySenderAndClientRef(senderWalletId, clientRef));
+    return queryOne(TxnSql.FIND_BY_SENDER_AND_CLIENT_REF,
+        paramMapper.bySenderAndClientRef(senderWalletId, clientRef));
   }
 
   @Override
@@ -66,7 +69,8 @@ public final class JdbcTxnRepository implements TxnRepository {
 
   @Override
   public boolean scheduleRecheck(UUID txnId, Duration delay) {
-    return jdbc.sql(TxnSql.SCHEDULE_RECHECK).params(paramMapper.recheck(txnId, delay)).update() == 1;
+    return jdbc.sql(TxnSql.SCHEDULE_RECHECK).params(paramMapper.recheck(txnId, delay)).update()
+        == 1;
   }
 
   @Override
@@ -84,22 +88,26 @@ public final class JdbcTxnRepository implements TxnRepository {
     if (txnIds.isEmpty()) {
       return 0;
     }
+
     Map<String, Object> params = paramMapper.txnIdArray(txnIds);
     Integer updated = transactions.execute(status -> {
       jdbc.sql(TxnSql.SET_LOCAL_SYNCHRONOUS_COMMIT_OFF).update();
       return jdbc.sql(TxnSql.MARK_EVENTS_PUBLISHED).params(params).update();
     });
+
     return updated == null ? 0 : updated;
   }
 
   @Override
   public List<SendMoneyTxn> findByTxnIdRange(UUID fromInclusive, UUID toExclusive, int limit) {
-    return queryList(TxnSql.FIND_BY_TXN_ID_RANGE, paramMapper.txnIdRange(fromInclusive, toExclusive, limit));
+    return queryList(TxnSql.FIND_BY_TXN_ID_RANGE,
+        paramMapper.txnIdRange(fromInclusive, toExclusive, limit));
   }
 
   @Override
   public Optional<SendMoneyTxn> markFailedAsCompleted(UUID txnId, OptionalLong ledgerTimestamp) {
-    return queryOne(TxnSql.MARK_FAILED_AS_COMPLETED, paramMapper.failedAsCompleted(txnId, ledgerTimestamp));
+    return queryOne(TxnSql.MARK_FAILED_AS_COMPLETED,
+        paramMapper.failedAsCompleted(txnId, ledgerTimestamp));
   }
 
   @Override

@@ -1,6 +1,8 @@
-package com.bracits.transactionservice.adapter.out.jdbc.sql;
+package com.bracits.transactionservice.adapter.out.jdbc.constant;
 
-/** Column names of {@code wallet}. */
+/**
+ * Column names of {@code wallet}.
+ */
 public final class WalletColumns {
 
   public static final String WALLET_ID = "wallet_id";

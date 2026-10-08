@@ -1,11 +1,14 @@
 package com.bracits.transactionservice.adapter.out.jdbc.sql;
 
-/** SQL of {@code JdbcLimitRepository}. */
+/**
+ * SQL of {@code JdbcLimitRepository}.
+ */
 public final class LimitSql {
 
   /**
-   * Limit reservation, spec 6.1 verbatim: one statement, one row lock per sender. Counters of a past day / month are
-   * reset in place; 0 rows updated means a daily or monthly amount or count limit would be exceeded.
+   * Limit reservation, spec 6.1 verbatim: one statement, one row lock per sender. Counters of a
+   * past day / month are reset in place; 0 rows updated means a daily or monthly amount or count
+   * limit would be exceeded.
    */
   public static final String RESERVE = """
       UPDATE wallet_limit_usage u SET

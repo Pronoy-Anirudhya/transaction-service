@@ -1,6 +1,8 @@
-package com.bracits.transactionservice.adapter.out.jdbc.sql;
+package com.bracits.transactionservice.adapter.out.jdbc.constant;
 
-/** Column names of {@code fee_rule} and {@code limit_rule}. */
+/**
+ * Column names of {@code fee_rule} and {@code limit_rule}.
+ */
 public final class RuleColumns {
 
   // shared

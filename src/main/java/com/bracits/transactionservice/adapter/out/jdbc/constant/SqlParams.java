@@ -1,6 +1,8 @@
-package com.bracits.transactionservice.adapter.out.jdbc.sql;
+package com.bracits.transactionservice.adapter.out.jdbc.constant;
 
-/** Named-parameter names used in the SQL text blocks ({@code :name}) and by the parameter mappers. */
+/**
+ * Named-parameter names used in the SQL text blocks ({@code :name}) and by the parameter mappers.
+ */
 public final class SqlParams {
 
   // wallet
@@ -46,7 +48,9 @@ public final class SqlParams {
   public static final String FROM_TXN_ID = "fromTxnId";
   public static final String TO_TXN_ID = "toTxnId";
 
-  /** PostgreSQL element type name of the {@code uuid[]} array bound to {@link #TXN_IDS}. */
+  /**
+   * PostgreSQL element type name of the {@code uuid[]} array bound to {@link #TXN_IDS}.
+   */
   public static final String UUID_TYPE_NAME = "uuid";
 
   private SqlParams() {

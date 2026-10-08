@@ -1,10 +1,9 @@
-package com.bracits.transactionservice.adapter.out.id;
+package com.bracits.transactionservice.adapter.out.id.generator;
 
-import com.bracits.transactionservice.domain.txn.TxnIdOrder;
-import com.bracits.transactionservice.domain.txn.TxnIds;
+import static org.assertj.core.api.Assertions.assertThat;
 
-import org.junit.jupiter.api.Test;
-
+import com.bracits.transactionservice.domain.txn.util.TxnIdOrder;
+import com.bracits.transactionservice.domain.txn.util.TxnIds;
 import java.time.Clock;
 import java.time.Instant;
 import java.time.ZoneId;
@@ -15,8 +14,7 @@ import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 import java.util.concurrent.atomic.AtomicLong;
-
-import static org.assertj.core.api.Assertions.assertThat;
+import org.junit.jupiter.api.Test;
 
 class TimeOrderedTxnIdGeneratorTest {
 
@@ -86,6 +84,7 @@ class TimeOrderedTxnIdGeneratorTest {
         return Instant.ofEpochMilli(now.getAndIncrement());
       }
     };
+
     TimeOrderedTxnIdGenerator generator = new TimeOrderedTxnIdGenerator(ticking);
     List<UUID> ids = new ArrayList<>();
 
@@ -95,22 +94,26 @@ class TimeOrderedTxnIdGeneratorTest {
 
     assertThat(ids).isSortedAccordingTo(TxnIdOrder::compareUnsigned);
     assertThat(ids).isSortedAccordingTo(UUID::compareTo);
+
     for (int i = 1; i < ids.size(); i++) {
       UUID previous = ids.get(i - 1);
       UUID current = ids.get(i);
-      assertThat(TxnIdOrder.compareUnsigned(TxnIds.lowerBound(Instant.ofEpochMilli(TxnIds.epochMillis(current))),
+      assertThat(TxnIdOrder.compareUnsigned(
+          TxnIds.lowerBound(Instant.ofEpochMilli(TxnIds.epochMillis(current))),
           previous)).isPositive();
     }
   }
 
   @Test
   void legIdsOfGeneratedIdKeepTheTxnPrefix() {
-    UUID txnId = new TimeOrderedTxnIdGenerator(Clock.fixed(Instant.ofEpochMilli(MILLIS), ZoneOffset.UTC)).next();
+    UUID txnId = new TimeOrderedTxnIdGenerator(
+        Clock.fixed(Instant.ofEpochMilli(MILLIS), ZoneOffset.UTC)).next();
 
     for (int leg = 1; leg <= 4; leg++) {
       UUID transferId = TxnIds.legTransferId(txnId, leg);
       assertThat(transferId.getMostSignificantBits()).isEqualTo(txnId.getMostSignificantBits());
-      assertThat(transferId.getLeastSignificantBits() & ~0xffL).isEqualTo(txnId.getLeastSignificantBits());
+      assertThat(transferId.getLeastSignificantBits() & ~0xffL).isEqualTo(
+          txnId.getLeastSignificantBits());
       assertThat(transferId.getLeastSignificantBits() & 0xff).isEqualTo(leg);
     }
   }

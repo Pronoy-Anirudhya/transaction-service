@@ -1,6 +1,8 @@
 package com.bracits.transactionservice.adapter.out.jdbc.sql;
 
-/** SQL of {@code JdbcRuleRepository}. Both tables are tiny and read only by the rule cache. */
+/**
+ * SQL of {@code JdbcRuleRepository}. Both tables are tiny and read only by the rule cache.
+ */
 public final class RuleSql {
 
   public static final String FIND_ACTIVE_FEE_RULES = """
