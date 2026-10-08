@@ -14,4 +14,5 @@ public record BalanceResponseDto(
     long debitsPending,
     long creditsPending,
     long available) {
+
 }

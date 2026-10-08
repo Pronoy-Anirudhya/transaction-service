@@ -1,8 +1,9 @@
-package com.bracits.transactionservice.adapter.out.ledger;
+package com.bracits.transactionservice.adapter.out.ledger.constant;
 
 /**
- * Wire constants of the ledger-service internal API ({@code ledger-service/openapi/ledger-api.yaml}, the
- * authoritative contract), bean names, metric tag values and log messages.
+ * Wire constants of the ledger-service internal API
+ * ({@code ledger-service/openapi/ledger-api.yaml}, the authoritative contract), bean names, metric
+ * tag values and log messages.
  */
 public final class LedgerApiConstants {
 
@@ -14,8 +15,11 @@ public final class LedgerApiConstants {
   public static final String ACCOUNT_BALANCE_PATH = "/internal/v1/accounts/{accountId}/balance";
   public static final String FUNDINGS_PATH = "/internal/v1/fundings";
   public static final String QUERY_LEGS = "legs";
+  public static final String READINESS_PATH = "/actuator/health/readiness";
 
-  /** Allowed range of the lookup {@code legs} query parameter (and of legs per posting). */
+  /**
+   * Allowed range of the lookup {@code legs} query parameter (and of legs per posting).
+   */
   public static final int MIN_LEGS = 1;
   public static final int MAX_LEGS = 8;
 
@@ -23,7 +27,9 @@ public final class LedgerApiConstants {
 
   public static final String STATUS_POSTED = "POSTED";
   public static final String STATUS_NOT_FOUND = "NOT_FOUND";
-  /** 422 codes; all definitive. */
+  /**
+   * 422 codes; all definitive.
+   */
   public static final String CODE_INSUFFICIENT_FUNDS = "INSUFFICIENT_FUNDS";
   public static final String CODE_ACCOUNT_NOT_FOUND = "ACCOUNT_NOT_FOUND";
   public static final String CODE_PREVIOUSLY_REJECTED = "PREVIOUSLY_REJECTED";
@@ -64,6 +70,11 @@ public final class LedgerApiConstants {
   public static final String MSG_FUNDING_CONFLICT = "Ledger funding exists with different content: %s";
   public static final String MSG_FUNDING_REJECTED = "Ledger rejected funding %s with code %s";
   public static final String MSG_UNKNOWN_LOOKUP_STATUS = "Unknown ledger lookup status %s for posting %s";
+  public static final String MSG_LEDGER_DOWN = "ledger-service is unavailable";
+  public static final String LOG_LEDGER_DOWN =
+      "ALERT ledger-service became unavailable; ledger-dependent requests answer 503 LEDGER_UNAVAILABLE";
+  public static final String LOG_LEDGER_UP = "ledger-service is available again";
+  public static final String HEALTH_DETAIL_REASON = "reason";
   public static final String MSG_INVALID_LEG_COUNT = "legCount must be %d..%d but was %d";
 
   private LedgerApiConstants() {
