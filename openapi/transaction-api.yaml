@@ -1,0 +1,1151 @@
+openapi: 3.1.0
+info:
+  title: transaction-service public API
+  version: 1.0.0
+  summary: Send Money (wallet to wallet) for the MFS POC v2.
+  description: |
+    Authoritative, contract-first definition of the public API of `transaction-service`
+    (Send Money POC v2, spec section 7.1). The implementation and its tests MUST match this file;
+    it is served unchanged at `GET /openapi.yaml`.
+
+    **Money.** Every amount is an integer number of **poisha** (BDT minor units, 1 BDT = 100 poisha).
+    Currency is always `BDT`. Timestamps are UTC, RFC 3339 (`date-time`).
+
+    **Authentication.** Every `/api/**` operation requires the static API key in the `X-API-Key`
+    header (NFR-09). A missing or wrong key returns `401 UNAUTHORIZED`.
+
+    **Idempotency.** `POST /api/v1/send-money` and `POST /api/v1/wallets/{msisdn}/fund` require an
+    `Idempotency-Key` header (1..64 characters). The same key from the same sender with the same
+    body returns the stored result; the same key with a different body returns
+    `409 IDEMPOTENCY_CONFLICT`. Wallet registration is idempotent on the MSISDN.
+
+    **Outcomes of Send Money.**
+
+    | HTTP | Meaning | Body |
+    | --- | --- | --- |
+    | 200 | `COMPLETED`: every leg is durably posted in the ledger | `SendMoneyResponse` |
+    | 202 | `PROCESSING`: ledger outcome not yet known; poll `GET /api/v1/send-money/{txnId}` | `SendMoneyResponse` |
+    | 422 | `FAILED`: business rule or definitive ledger rejection, see `code` | `Problem` (+ `txnId` when a record exists) |
+    | 409 | `IDEMPOTENCY_CONFLICT` or `QUOTE_CHANGED` | `Problem` |
+    | 503 | Overloaded or a dependency is down **before** any money moved; retry after `Retry-After` | `Problem` |
+
+    **Errors** are RFC 9457 Problem Details (`application/problem+json`) with a machine-readable
+    `code` extension member. `type` is `urn:problem-type:mfs:` followed by the `code`
+    (framework-generated problems may use `about:blank`).
+
+    **Test-profile endpoints.** `POST /api/v1/wallets` and `POST /api/v1/wallets/{msisdn}/fund`
+    exist only when the Spring profile `test` is active; otherwise they return 404.
+  contact:
+    name: MFS POC team
+  license:
+    name: Proprietary
+    identifier: LicenseRef-Proprietary
+servers:
+  - url: http://localhost:8080
+    description: Local development / Docker Compose
+tags:
+  - name: send-money
+    description: Quote, send and status (FR-01, FR-02, FR-04).
+  - name: admin
+    description: Operations (FR-08).
+  - name: wallets
+    description: Support endpoints for testing (FR-09).
+  - name: contract
+    description: This document.
+
+security:
+  - apiKey: []
+
+paths:
+  /api/v1/send-money/quote:
+    post:
+      tags: [send-money]
+      operationId: quoteSendMoney
+      summary: Quote a Send Money (no writes)
+      description: |
+        FR-01. Checks BR-01 (wallets exist, ACTIVE, CUSTOMER, sender ≠ receiver) and BR-02 (amount
+        within the sender tier's per-transaction range), prices the transfer (BR-04..BR-07) and
+        returns a signed `quoteToken` valid for 5 minutes. Limits and balance are **not** checked.
+        Nothing is written.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/QuoteRequest'
+            examples:
+              rent:
+                summary: Worked example (spec 3) — 1,000.00 BDT
+                value:
+                  senderMsisdn: '01711000001'
+                  receiverMsisdn: '01811000002'
+                  amount: 100000
+                  currency: BDT
+      responses:
+        '200':
+          description: The quote.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/QuoteResponse'
+              examples:
+                rent:
+                  summary: Fee 500, VAT 65, commission 87
+                  value:
+                    receiverName: K*** U***
+                    amount: 100000
+                    fee: 500
+                    vat: 65
+                    commission: 87
+                    totalDebit: 100500
+                    quoteToken: eyJzIjoiMDE3MTEwMDAwMDEiLCJyIjoiMDE4MTEwMDAwMDIiLCJhIjoxMDAwMDAsImYiOjUwMCwiZSI6MTc5MTM1MTE0MzIxMX0.Zq3k1w1y3yX1pZ5cO0Jm8xkD3t0z2vI6eV8m3c1aPz9
+                    expiresAt: '2026-10-07T09:19:03.211Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '422':
+          $ref: '#/components/responses/QuoteRuleFailed'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /api/v1/send-money:
+    post:
+      tags: [send-money]
+      operationId: sendMoney
+      summary: Send Money (synchronous, idempotent)
+      description: |
+        FR-02. Validates, prices, reserves limits, posts all legs atomically to the ledger and
+        returns the final status in the same response.
+
+        - **200** `COMPLETED`: the ledger acknowledged the posting (NFR-04).
+        - **202** `PROCESSING`: the ledger outcome is unknown (timeouts after retries, ledger 409/500,
+          ledger bulkhead full) or the same `Idempotency-Key` is still in flight. The repair worker
+          resolves it; poll `GET /api/v1/send-money/{txnId}`.
+        - **422** `FAILED`: a business rule failed (no record is written, no `txnId`) or the ledger
+          rejected the posting definitively (record FAILED, limits released, `txnId` present).
+
+        If `quoteToken` is sent, the fee MUST equal the quoted fee and the token must match the
+        sender, receiver and amount and be unexpired, otherwise `409 QUOTE_CHANGED`. A malformed
+        token or a bad signature is `400 INVALID_QUOTE_TOKEN`.
+
+        A replay (same sender, same `Idempotency-Key`, same body) returns the stored outcome with
+        the same status code as the original (200, 202 while in flight, or 422).
+      parameters:
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/SendMoneyRequest'
+            examples:
+              rent:
+                summary: Worked example (spec 3) with a reference and a quote token
+                value:
+                  senderMsisdn: '01711000001'
+                  receiverMsisdn: '01811000002'
+                  amount: 100000
+                  currency: BDT
+                  reference: Rent
+                  quoteToken: eyJzIjoiMDE3MTEwMDAwMDEiLCJyIjoiMDE4MTEwMDAwMDIiLCJhIjoxMDAwMDAsImYiOjUwMCwiZSI6MTc5MTM1MTE0MzIxMX0.Zq3k1w1y3yX1pZ5cO0Jm8xkD3t0z2vI6eV8m3c1aPz9
+              minimal:
+                summary: Required fields only
+                value:
+                  senderMsisdn: '01711000001'
+                  receiverMsisdn: '01811000002'
+                  amount: 100000
+                  currency: BDT
+      responses:
+        '200':
+          description: COMPLETED. Every leg is durably posted in the ledger.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMoneyResponse'
+              examples:
+                completed:
+                  value:
+                    txnId: 0192f5a4-7c2e-7b1a-9d3e-5f4a2b1c0d00
+                    status: COMPLETED
+                    amount: 100000
+                    fee: 500
+                    vat: 65
+                    commission: 87
+                    totalDebit: 100500
+                    completedAt: '2026-10-07T09:14:03.211Z'
+        '202':
+          description: |
+            PROCESSING. The record exists and the outcome is being resolved; poll the status
+            endpoint. `completedAt` is absent.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/SendMoneyResponse'
+              examples:
+                processing:
+                  value:
+                    txnId: 0192f5a4-7c2e-7b1a-9d3e-5f4a2b1c0d00
+                    status: PROCESSING
+                    amount: 100000
+                    fee: 500
+                    vat: 65
+                    commission: 87
+                    totalDebit: 100500
+        '400':
+          description: |
+            `VALIDATION_FAILED` (invalid body, missing or too long `Idempotency-Key`) or
+            `INVALID_QUOTE_TOKEN` (malformed token or bad signature). Nothing was written.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                validationFailed:
+                  $ref: '#/components/examples/ValidationFailedProblem'
+                missingIdempotencyKey:
+                  value:
+                    type: urn:problem-type:mfs:VALIDATION_FAILED
+                    title: Bad Request
+                    status: 400
+                    detail: Required header 'Idempotency-Key' is missing
+                    instance: /api/v1/send-money
+                    code: VALIDATION_FAILED
+                    errors:
+                      - field: Idempotency-Key
+                        message: must not be blank
+                invalidQuoteToken:
+                  value:
+                    type: urn:problem-type:mfs:INVALID_QUOTE_TOKEN
+                    title: Bad Request
+                    status: 400
+                    detail: The quote token is malformed or its signature is invalid
+                    instance: /api/v1/send-money
+                    code: INVALID_QUOTE_TOKEN
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: |
+            `IDEMPOTENCY_CONFLICT`: the `Idempotency-Key` was already used by this sender with a
+            different body (`txnId` of the original is included). `QUOTE_CHANGED`: the quote expired,
+            does not match the request, or the fee changed. Do not retry the same request.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                idempotencyConflict:
+                  value:
+                    type: urn:problem-type:mfs:IDEMPOTENCY_CONFLICT
+                    title: Conflict
+                    status: 409
+                    detail: Idempotency-Key was already used with a different request body
+                    instance: /api/v1/send-money
+                    code: IDEMPOTENCY_CONFLICT
+                    txnId: 0192f5a4-7c2e-7b1a-9d3e-5f4a2b1c0d00
+                quoteChanged:
+                  value:
+                    type: urn:problem-type:mfs:QUOTE_CHANGED
+                    title: Conflict
+                    status: 409
+                    detail: The quote has expired or no longer matches; request a new quote
+                    instance: /api/v1/send-money
+                    code: QUOTE_CHANGED
+        '422':
+          description: |
+            FAILED. `code` is the reason. Rule failures (`SELF_TRANSFER`, `WALLET_NOT_FOUND`,
+            `WALLET_INACTIVE`, `RECEIVER_NOT_ALLOWED`, `AMOUNT_OUT_OF_RANGE`, `LIMIT_EXCEEDED`) write
+            no record and carry no `txnId`. Ledger rejections (`INSUFFICIENT_FUNDS`,
+            `WALLET_NOT_FOUND`, `LEDGER_REJECTED`) mark the record FAILED, release the limits and carry
+            its `txnId`. Not retryable as is.
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                insufficientFunds:
+                  value:
+                    type: urn:problem-type:mfs:INSUFFICIENT_FUNDS
+                    title: Unprocessable Content
+                    status: 422
+                    detail: The sender's available balance is too low
+                    instance: /api/v1/send-money
+                    code: INSUFFICIENT_FUNDS
+                    txnId: 0192f5a4-7c2e-7b1a-9d3e-5f4a2b1c0d00
+                limitExceeded:
+                  value:
+                    type: urn:problem-type:mfs:LIMIT_EXCEEDED
+                    title: Unprocessable Content
+                    status: 422
+                    detail: The sender's daily or monthly limit would be exceeded
+                    instance: /api/v1/send-money
+                    code: LIMIT_EXCEEDED
+                selfTransfer:
+                  $ref: '#/components/examples/SelfTransferProblem'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /api/v1/send-money/{txnId}:
+    get:
+      tags: [send-money]
+      operationId: getSendMoneyStatus
+      summary: Current state of a Send Money
+      description: FR-04. `INITIATED` records are reported as `PROCESSING`.
+      parameters:
+        - name: txnId
+          in: path
+          required: true
+          description: The transaction id returned by `POST /api/v1/send-money`.
+          schema:
+            type: string
+            format: uuid
+          example: 0192f5a4-7c2e-7b1a-9d3e-5f4a2b1c0d00
+      responses:
+        '200':
+          description: The current state.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/TxnStatusResponse'
+              examples:
+                completed:
+                  value:
+                    txnId: 0192f5a4-7c2e-7b1a-9d3e-5f4a2b1c0d00
+                    status: COMPLETED
+                    amount: 100000
+                    fee: 500
+                    vat: 65
+                    commission: 87
+                    totalDebit: 100500
+                    currency: BDT
+                    reference: Rent
+                    createdAt: '2026-10-07T09:14:03.187Z'
+                    completedAt: '2026-10-07T09:14:03.211Z'
+                failed:
+                  value:
+                    txnId: 0192f5a4-8d3f-7c2b-8e4f-6a5b3c2d1e00
+                    status: FAILED
+                    amount: 100000
+                    fee: 500
+                    vat: 65
+                    commission: 87
+                    totalDebit: 100500
+                    currency: BDT
+                    failureCode: INSUFFICIENT_FUNDS
+                    createdAt: '2026-10-07T09:15:10.402Z'
+                    completedAt: '2026-10-07T09:15:10.419Z'
+                processing:
+                  value:
+                    txnId: 0192f5a4-9e4a-7d3c-9f5a-7b6c4d3e2f00
+                    status: PROCESSING
+                    amount: 100000
+                    fee: 500
+                    vat: 65
+                    commission: 87
+                    totalDebit: 100500
+                    currency: BDT
+                    createdAt: '2026-10-07T09:16:41.030Z'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /api/v1/admin/reconciliation:
+    get:
+      tags: [admin]
+      operationId: reconcile
+      summary: Compare transaction records with ledger postings
+      description: |
+        FR-08. Checks every final record created in `[from, to)` against the ledger: a COMPLETED
+        record must have all its legs posted, a FAILED record none. If a FAILED record's legs **are**
+        posted, the ledger wins: the record is flipped to COMPLETED, limits are re-counted, a
+        corrective `SendMoneyCompleted` is published and an alert is raised (spec 8.5).
+
+        At most `poc.reconciliation.max-rows` records are checked per call; if the window holds
+        more, `truncated` is `true` and the caller narrows the window.
+      parameters:
+        - name: from
+          in: query
+          required: true
+          description: Window start (inclusive), UTC.
+          schema:
+            type: string
+            format: date-time
+          example: '2026-10-07T09:00:00Z'
+        - name: to
+          in: query
+          required: true
+          description: Window end (exclusive), UTC. Must be after `from`.
+          schema:
+            type: string
+            format: date-time
+          example: '2026-10-07T10:00:00Z'
+      responses:
+        '200':
+          description: The report.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ReconciliationReport'
+              examples:
+                clean:
+                  summary: No mismatch
+                  value:
+                    from: '2026-10-07T09:00:00Z'
+                    to: '2026-10-07T10:00:00Z'
+                    checked: 1250
+                    truncated: false
+                    mismatches: []
+                flipped:
+                  summary: A FAILED record whose legs are posted (ledger wins)
+                  value:
+                    from: '2026-10-07T09:00:00Z'
+                    to: '2026-10-07T10:00:00Z'
+                    checked: 1250
+                    truncated: false
+                    mismatches:
+                      - txnId: 0192f5a4-8d3f-7c2b-8e4f-6a5b3c2d1e00
+                        recordStatus: FAILED
+                        ledgerStatus: POSTED
+                        action: FLIPPED_TO_COMPLETED
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /api/v1/wallets:
+    post:
+      tags: [wallets]
+      operationId: registerWallet
+      summary: Register a customer wallet (test profile)
+      description: |
+        FR-09, **test profile only**. Creates an ACTIVE CUSTOMER wallet and its ledger account
+        (code 100, `DEBITS_MUST_NOT_EXCEED_CREDITS`). Idempotent on the MSISDN: re-sending identical
+        fields re-ensures the ledger account and returns the stored wallet with **200**; the same
+        MSISDN with different fields returns `409 MSISDN_EXISTS`.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegisterWalletRequest'
+            examples:
+              rahim:
+                value:
+                  msisdn: '01711000001'
+                  holderName: Rahim Uddin
+                  kycTier: 1
+      responses:
+        '201':
+          description: The wallet was created.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterWalletResponse'
+              examples:
+                created:
+                  $ref: '#/components/examples/RegisteredWallet'
+        '200':
+          description: Identical replay; the stored wallet.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegisterWalletResponse'
+              examples:
+                replay:
+                  $ref: '#/components/examples/RegisteredWallet'
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '409':
+          description: '`MSISDN_EXISTS`: a wallet with this MSISDN exists with different fields.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                msisdnExists:
+                  value:
+                    type: urn:problem-type:mfs:MSISDN_EXISTS
+                    title: Conflict
+                    status: 409
+                    detail: A wallet with this MSISDN already exists with different fields
+                    instance: /api/v1/wallets
+                    code: MSISDN_EXISTS
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /api/v1/wallets/{msisdn}/fund:
+    post:
+      tags: [wallets]
+      operationId: fundWallet
+      summary: Fund a wallet from e-money issuance (test profile)
+      description: |
+        FR-09, **test profile only**. Simulated cash-in: one ledger transfer from the e-money
+        issuance account to the wallet. The `fundingId` is derived deterministically from the wallet
+        and the `Idempotency-Key`, so a retry never funds twice; the same key with a different
+        amount returns `409 IDEMPOTENCY_CONFLICT`.
+      parameters:
+        - $ref: '#/components/parameters/Msisdn'
+        - $ref: '#/components/parameters/IdempotencyKey'
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/FundWalletRequest'
+            examples:
+              fiveThousand:
+                summary: 5,000.00 BDT
+                value:
+                  amount: 500000
+      responses:
+        '200':
+          description: POSTED (also for an identical replay).
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/FundWalletResponse'
+              examples:
+                posted:
+                  value:
+                    fundingId: 5b1e3c7a-2d4f-5e6a-8b9c-0d1e2f3a4b00
+                    msisdn: '01711000001'
+                    amount: 500000
+                    status: POSTED
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '409':
+          description: '`IDEMPOTENCY_CONFLICT`: the `Idempotency-Key` was already used with a different amount.'
+          content:
+            application/problem+json:
+              schema:
+                $ref: '#/components/schemas/Problem'
+              examples:
+                idempotencyConflict:
+                  value:
+                    type: urn:problem-type:mfs:IDEMPOTENCY_CONFLICT
+                    title: Conflict
+                    status: 409
+                    detail: Idempotency-Key was already used with a different amount
+                    instance: /api/v1/wallets/01711000001/fund
+                    code: IDEMPOTENCY_CONFLICT
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /api/v1/wallets/{msisdn}/balance:
+    get:
+      tags: [wallets]
+      operationId: getWalletBalance
+      summary: Wallet balance (read through to the ledger)
+      description: |
+        Always available (not limited to the test profile). PostgreSQL never stores a balance; this
+        reads the ledger account. `posted = creditsPosted − debitsPosted`,
+        `pending = creditsPending − debitsPending`, `available` as computed by the ledger.
+      parameters:
+        - $ref: '#/components/parameters/Msisdn'
+      responses:
+        '200':
+          description: The balance in poisha.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/BalanceResponse'
+              examples:
+                afterSend:
+                  summary: Funded 500000, then sent the worked example
+                  value:
+                    posted: 399500
+                    pending: 0
+                    available: 399500
+        '400':
+          $ref: '#/components/responses/ValidationFailed'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '500':
+          $ref: '#/components/responses/InternalError'
+        '503':
+          $ref: '#/components/responses/Unavailable'
+
+  /openapi.yaml:
+    get:
+      tags: [contract]
+      operationId: getOpenApiContract
+      summary: This contract
+      description: Serves this file unchanged. No API key required. Swagger UI renders it at `/swagger-ui.html`.
+      security: []
+      responses:
+        '200':
+          description: The OpenAPI 3.1 document.
+          content:
+            application/yaml:
+              schema:
+                type: string
+
+components:
+  securitySchemes:
+    apiKey:
+      type: apiKey
+      in: header
+      name: X-API-Key
+      description: Static API key (environment variable `API_KEY`, property `poc.security.api-key`).
+
+  parameters:
+    IdempotencyKey:
+      name: Idempotency-Key
+      in: header
+      required: true
+      description: |
+        Client-chosen key, unique per sender and logical operation (for example a UUID). Re-sending
+        the same key with the same body returns the stored result.
+      schema:
+        type: string
+        minLength: 1
+        maxLength: 64
+      example: 7f9c2ba4-e88f-4d2a-9d3b-1c5e8a7f6b21
+    Msisdn:
+      name: msisdn
+      in: path
+      required: true
+      description: Bangladeshi mobile number, 11 digits.
+      schema:
+        $ref: '#/components/schemas/Msisdn'
+      example: '01711000001'
+
+  headers:
+    RetryAfter:
+      description: Seconds to wait before retrying.
+      required: true
+      schema:
+        type: integer
+        minimum: 1
+      example: 1
+
+  examples:
+    ValidationFailedProblem:
+      value:
+        type: urn:problem-type:mfs:VALIDATION_FAILED
+        title: Bad Request
+        status: 400
+        detail: Request validation failed
+        instance: /api/v1/send-money
+        code: VALIDATION_FAILED
+        errors:
+          - field: amount
+            message: must be greater than 0
+          - field: receiverMsisdn
+            message: must match "^01[3-9][0-9]{8}$"
+    SelfTransferProblem:
+      value:
+        type: urn:problem-type:mfs:SELF_TRANSFER
+        title: Unprocessable Content
+        status: 422
+        detail: Sender and receiver must be different wallets
+        instance: /api/v1/send-money
+        code: SELF_TRANSFER
+    RegisteredWallet:
+      value:
+        walletId: 42
+        msisdn: '01711000001'
+        ledgerAccountId: 0192f0b1-2c3d-7e4f-8a5b-6c7d8e9f0a11
+
+  responses:
+    ValidationFailed:
+      description: |
+        `VALIDATION_FAILED`: the body, a header, a path variable or a query parameter is invalid.
+        `errors` lists the offending fields when known. Do not retry unchanged.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            validationFailed:
+              $ref: '#/components/examples/ValidationFailedProblem'
+    Unauthorized:
+      description: '`UNAUTHORIZED`: the `X-API-Key` header is missing or wrong.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            unauthorized:
+              value:
+                type: urn:problem-type:mfs:UNAUTHORIZED
+                title: Unauthorized
+                status: 401
+                detail: Missing or invalid API key
+                instance: /api/v1/send-money
+                code: UNAUTHORIZED
+    NotFound:
+      description: '`NOT_FOUND`: no such transaction or wallet.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            notFound:
+              value:
+                type: urn:problem-type:mfs:NOT_FOUND
+                title: Not Found
+                status: 404
+                detail: Wallet not found
+                instance: /api/v1/wallets/01799999999/balance
+                code: NOT_FOUND
+    QuoteRuleFailed:
+      description: |
+        A business rule failed: `SELF_TRANSFER`, `WALLET_NOT_FOUND`, `WALLET_INACTIVE`,
+        `RECEIVER_NOT_ALLOWED` or `AMOUNT_OUT_OF_RANGE`. Nothing was written.
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            amountOutOfRange:
+              value:
+                type: urn:problem-type:mfs:AMOUNT_OUT_OF_RANGE
+                title: Unprocessable Content
+                status: 422
+                detail: Amount is outside the sender tier's per-transaction range
+                instance: /api/v1/send-money/quote
+                code: AMOUNT_OUT_OF_RANGE
+            selfTransfer:
+              $ref: '#/components/examples/SelfTransferProblem'
+    Unavailable:
+      description: |
+        `OVERLOADED` (a bulkhead is saturated, the request was shed before any write) or
+        `SERVICE_UNAVAILABLE` (PostgreSQL or the ledger is unavailable before any money moved).
+        Retry the identical request (same `Idempotency-Key`) after `Retry-After` seconds.
+      headers:
+        Retry-After:
+          $ref: '#/components/headers/RetryAfter'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            overloaded:
+              value:
+                type: urn:problem-type:mfs:OVERLOADED
+                title: Service Unavailable
+                status: 503
+                detail: Too many concurrent requests; retry later
+                instance: /api/v1/send-money
+                code: OVERLOADED
+            serviceUnavailable:
+              value:
+                type: urn:problem-type:mfs:SERVICE_UNAVAILABLE
+                title: Service Unavailable
+                status: 503
+                detail: A dependency is unavailable; no money was moved
+                instance: /api/v1/send-money
+                code: SERVICE_UNAVAILABLE
+    InternalError:
+      description: '`INTERNAL_ERROR`: unexpected error. For Send Money, poll the status before retrying.'
+      content:
+        application/problem+json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            internalError:
+              value:
+                type: urn:problem-type:mfs:INTERNAL_ERROR
+                title: Internal Server Error
+                status: 500
+                detail: Unexpected error
+                instance: /api/v1/send-money
+                code: INTERNAL_ERROR
+
+  schemas:
+    Msisdn:
+      type: string
+      pattern: '^01[3-9][0-9]{8}$'
+      description: Bangladeshi mobile number (11 digits, operator prefix 013–019).
+      examples: ['01711000001']
+
+    Currency:
+      type: string
+      pattern: '^BDT$'
+      description: ISO 4217 currency code. Only `BDT` is supported.
+      examples: [BDT]
+
+    Poisha:
+      type: integer
+      format: int64
+      description: Amount in poisha (BDT minor units).
+
+    PositivePoisha:
+      type: integer
+      format: int64
+      minimum: 1
+      description: Amount in poisha (BDT minor units), greater than 0.
+
+    TxnStatus:
+      type: string
+      enum: [PROCESSING, COMPLETED, FAILED]
+      description: API status. A record still `INITIATED` in the database is shown as `PROCESSING`.
+
+    FailureCode:
+      type: string
+      description: Business failure code (stored as `send_money_txn.failure_code`).
+      enum:
+        - INSUFFICIENT_FUNDS
+        - LIMIT_EXCEEDED
+        - AMOUNT_OUT_OF_RANGE
+        - SELF_TRANSFER
+        - WALLET_NOT_FOUND
+        - WALLET_INACTIVE
+        - RECEIVER_NOT_ALLOWED
+        - QUOTE_CHANGED
+        - IDEMPOTENCY_CONFLICT
+        - LEDGER_REJECTED
+
+    ErrorCode:
+      type: string
+      description: |
+        The `code` member of every problem: a business `FailureCode` or an API error code.
+
+        | Code | HTTP |
+        | --- | --- |
+        | `INSUFFICIENT_FUNDS`, `LIMIT_EXCEEDED`, `AMOUNT_OUT_OF_RANGE`, `SELF_TRANSFER`, `WALLET_NOT_FOUND`, `WALLET_INACTIVE`, `RECEIVER_NOT_ALLOWED`, `LEDGER_REJECTED` | 422 |
+        | `QUOTE_CHANGED`, `IDEMPOTENCY_CONFLICT`, `MSISDN_EXISTS` | 409 |
+        | `VALIDATION_FAILED`, `INVALID_QUOTE_TOKEN` | 400 |
+        | `UNAUTHORIZED` | 401 |
+        | `NOT_FOUND` | 404 |
+        | `OVERLOADED`, `SERVICE_UNAVAILABLE` | 503 |
+        | `INTERNAL_ERROR` | 500 |
+      enum:
+        - INSUFFICIENT_FUNDS
+        - LIMIT_EXCEEDED
+        - AMOUNT_OUT_OF_RANGE
+        - SELF_TRANSFER
+        - WALLET_NOT_FOUND
+        - WALLET_INACTIVE
+        - RECEIVER_NOT_ALLOWED
+        - QUOTE_CHANGED
+        - IDEMPOTENCY_CONFLICT
+        - LEDGER_REJECTED
+        - VALIDATION_FAILED
+        - INVALID_QUOTE_TOKEN
+        - UNAUTHORIZED
+        - NOT_FOUND
+        - MSISDN_EXISTS
+        - OVERLOADED
+        - SERVICE_UNAVAILABLE
+        - INTERNAL_ERROR
+
+    QuoteRequest:
+      type: object
+      required: [senderMsisdn, receiverMsisdn, amount, currency]
+      properties:
+        senderMsisdn:
+          $ref: '#/components/schemas/Msisdn'
+        receiverMsisdn:
+          $ref: '#/components/schemas/Msisdn'
+        amount:
+          $ref: '#/components/schemas/PositivePoisha'
+        currency:
+          $ref: '#/components/schemas/Currency'
+
+    QuoteResponse:
+      type: object
+      required: [receiverName, amount, fee, vat, commission, totalDebit, quoteToken, expiresAt]
+      properties:
+        receiverName:
+          type: string
+          description: The receiver's holder name, masked.
+          examples: [K*** U***]
+        amount:
+          $ref: '#/components/schemas/Poisha'
+        fee:
+          $ref: '#/components/schemas/Poisha'
+        vat:
+          $ref: '#/components/schemas/Poisha'
+        commission:
+          $ref: '#/components/schemas/Poisha'
+        totalDebit:
+          allOf:
+            - $ref: '#/components/schemas/Poisha'
+          description: amount + fee (what the sender is debited).
+        quoteToken:
+          type: string
+          description: |
+            Signed token `base64url(payload).base64url(HMAC-SHA256)`, valid until `expiresAt`. Pass it
+            to `POST /api/v1/send-money` to lock the fee.
+        expiresAt:
+          type: string
+          format: date-time
+
+    SendMoneyRequest:
+      type: object
+      required: [senderMsisdn, receiverMsisdn, amount, currency]
+      properties:
+        senderMsisdn:
+          $ref: '#/components/schemas/Msisdn'
+        receiverMsisdn:
+          $ref: '#/components/schemas/Msisdn'
+        amount:
+          $ref: '#/components/schemas/PositivePoisha'
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reference:
+          type: [string, 'null']
+          maxLength: 50
+          description: Free-text reference shown to both parties.
+          examples: [Rent]
+        quoteToken:
+          type: [string, 'null']
+          maxLength: 512
+          description: Optional token from the quote endpoint; locks the fee.
+
+    SendMoneyResponse:
+      type: object
+      description: Body of 200 COMPLETED and 202 PROCESSING.
+      required: [txnId, status, amount, fee, vat, commission, totalDebit]
+      properties:
+        txnId:
+          type: string
+          format: uuid
+          description: Time-ordered transaction id (low byte 00).
+        status:
+          $ref: '#/components/schemas/TxnStatus'
+        amount:
+          $ref: '#/components/schemas/Poisha'
+        fee:
+          $ref: '#/components/schemas/Poisha'
+        vat:
+          $ref: '#/components/schemas/Poisha'
+        commission:
+          $ref: '#/components/schemas/Poisha'
+        totalDebit:
+          allOf:
+            - $ref: '#/components/schemas/Poisha'
+          description: amount + fee.
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Set when COMPLETED; omitted while PROCESSING.
+
+    TxnStatusResponse:
+      type: object
+      required: [txnId, status, amount, fee, vat, commission, totalDebit, currency, createdAt]
+      properties:
+        txnId:
+          type: string
+          format: uuid
+        status:
+          $ref: '#/components/schemas/TxnStatus'
+        amount:
+          $ref: '#/components/schemas/Poisha'
+        fee:
+          $ref: '#/components/schemas/Poisha'
+        vat:
+          $ref: '#/components/schemas/Poisha'
+        commission:
+          $ref: '#/components/schemas/Poisha'
+        totalDebit:
+          allOf:
+            - $ref: '#/components/schemas/Poisha'
+          description: amount + fee.
+        currency:
+          $ref: '#/components/schemas/Currency'
+        reference:
+          type: [string, 'null']
+          maxLength: 50
+          description: Omitted when the request had none.
+        failureCode:
+          description: Set when FAILED; omitted otherwise.
+          anyOf:
+            - $ref: '#/components/schemas/FailureCode'
+            - type: 'null'
+        createdAt:
+          type: string
+          format: date-time
+        completedAt:
+          type: [string, 'null']
+          format: date-time
+          description: Set when COMPLETED or FAILED; omitted while PROCESSING.
+
+    ReconciliationReport:
+      type: object
+      required: [from, to, checked, truncated, mismatches]
+      properties:
+        from:
+          type: string
+          format: date-time
+        to:
+          type: string
+          format: date-time
+        checked:
+          type: integer
+          format: int32
+          minimum: 0
+          description: Number of records compared with the ledger.
+        truncated:
+          type: boolean
+          description: True if the window held more records than the per-call cap; narrow the window and call again.
+        mismatches:
+          type: array
+          items:
+            $ref: '#/components/schemas/ReconciliationMismatch'
+
+    ReconciliationMismatch:
+      type: object
+      required: [txnId, recordStatus, ledgerStatus, action]
+      properties:
+        txnId:
+          type: string
+          format: uuid
+        recordStatus:
+          type: string
+          enum: [INITIATED, COMPLETED, FAILED]
+          description: The record's stored status before any action.
+        ledgerStatus:
+          type: string
+          enum: [POSTED, NOT_FOUND, UNKNOWN]
+          description: What the ledger reports for the record's legs.
+        action:
+          type: string
+          description: What reconciliation did, for example `FLIPPED_TO_COMPLETED` or `ALERT_ONLY`.
+          examples: [FLIPPED_TO_COMPLETED, ALERT_ONLY]
+
+    RegisterWalletRequest:
+      type: object
+      required: [msisdn, holderName, kycTier]
+      properties:
+        msisdn:
+          $ref: '#/components/schemas/Msisdn'
+        holderName:
+          type: string
+          minLength: 1
+          maxLength: 100
+          pattern: '\S'
+          examples: [Rahim Uddin]
+        kycTier:
+          type: integer
+          format: int32
+          minimum: 1
+          examples: [1]
+
+    RegisterWalletResponse:
+      type: object
+      required: [walletId, msisdn, ledgerAccountId]
+      properties:
+        walletId:
+          type: integer
+          format: int64
+        msisdn:
+          $ref: '#/components/schemas/Msisdn'
+        ledgerAccountId:
+          type: string
+          format: uuid
+          description: The wallet's TigerBeetle account id.
+
+    FundWalletRequest:
+      type: object
+      required: [amount]
+      properties:
+        amount:
+          $ref: '#/components/schemas/PositivePoisha'
+
+    FundWalletResponse:
+      type: object
+      required: [fundingId, msisdn, amount, status]
+      properties:
+        fundingId:
+          type: string
+          format: uuid
+          description: Deterministic per (wallet, Idempotency-Key); low byte 00.
+        msisdn:
+          $ref: '#/components/schemas/Msisdn'
+        amount:
+          $ref: '#/components/schemas/Poisha'
+        status:
+          type: string
+          enum: [POSTED]
+
+    BalanceResponse:
+      type: object
+      required: [posted, pending, available]
+      description: Amounts in poisha.
+      properties:
+        posted:
+          allOf:
+            - $ref: '#/components/schemas/Poisha'
+          description: creditsPosted − debitsPosted.
+        pending:
+          allOf:
+            - $ref: '#/components/schemas/Poisha'
+          description: creditsPending − debitsPending.
+        available:
+          allOf:
+            - $ref: '#/components/schemas/Poisha'
+          description: As computed by the ledger.
+
+    FieldError:
+      type: object
+      required: [field, message]
+      properties:
+        field:
+          type: string
+          examples: [amount]
+        message:
+          type: string
+          examples: [must be greater than 0]
+
+    Problem:
+      type: object
+      description: RFC 9457 Problem Details with the extension members `code`, `txnId` and `errors`.
+      required: [type, title, status, code]
+      properties:
+        type:
+          type: string
+          format: uri-reference
+          description: '`urn:problem-type:mfs:<code>` (or `about:blank` for framework-generated problems).'
+          examples: ['urn:problem-type:mfs:INSUFFICIENT_FUNDS']
+        title:
+          type: string
+        status:
+          type: integer
+          format: int32
+          description: The HTTP status code.
+        detail:
+          type: string
+        instance:
+          type: string
+          format: uri-reference
+        code:
+          $ref: '#/components/schemas/ErrorCode'
+        txnId:
+          type: string
+          format: uuid
+          description: Present when a transaction record exists (ledger rejection, idempotency conflict).
+        errors:
+          type: array
+          description: Field-level validation errors (400 only).
+          items:
+            $ref: '#/components/schemas/FieldError'
