@@ -1,6 +1,8 @@
 package com.bracits.transactionservice.adapter.out.jdbc.sql;
 
-/** SQL of {@code JdbcWalletRepository}. One statement per repository method. */
+/**
+ * SQL of {@code JdbcWalletRepository}. One statement per repository method.
+ */
 public final class WalletSql {
 
   public static final String FIND_BY_MSISDN = """
@@ -16,8 +18,9 @@ public final class WalletSql {
       """;
 
   /**
-   * Wallet and its {@code wallet_limit_usage} row in one statement. On a duplicate MSISDN {@code w} is empty, so
-   * nothing is written and no row is returned. The FK of the usage row is checked at the end of the statement.
+   * Wallet and its {@code wallet_limit_usage} row in one statement. On a duplicate MSISDN {@code w}
+   * is empty, so nothing is written and no row is returned. The FK of the usage row is checked at
+   * the end of the statement.
    */
   public static final String INSERT_IF_ABSENT = """
       WITH w AS (

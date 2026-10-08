@@ -1,25 +1,25 @@
 package com.bracits.transactionservice.application.mapper;
 
-import com.bracits.transactionservice.adapter.out.amqp.EventFixtures;
-import com.bracits.transactionservice.domain.DomainConstants;
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.event.EventIds;
-import com.bracits.transactionservice.domain.event.EventType;
-import com.bracits.transactionservice.domain.event.SendMoneyEvent;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import org.junit.jupiter.api.Test;
-
-import java.util.Optional;
-import java.util.OptionalLong;
-import java.util.UUID;
-
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatIllegalArgumentException;
 
+import com.bracits.transactionservice.adapter.out.amqp.fixture.EventFixtures;
+import com.bracits.transactionservice.application.mapper.impl.SendMoneyEventMapperImpl;
+import com.bracits.transactionservice.domain.constant.DomainConstants;
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.event.enums.EventType;
+import com.bracits.transactionservice.domain.event.factory.EventIds;
+import com.bracits.transactionservice.domain.event.model.SendMoneyEvent;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
 class SendMoneyEventMapperTest {
 
-  private final SendMoneyEventMapper mapper = new SendMoneyEventMapper();
+  private final SendMoneyEventMapper mapper = new SendMoneyEventMapperImpl();
 
   @Test
   void completedTxnMapsToSendMoneyCompleted() {
@@ -72,7 +72,8 @@ class SendMoneyEventMapperTest {
 
   @Test
   void initiatedTxnHasNoEvent() {
-    SendMoneyTxn txn = EventFixtures.txn(EventFixtures.newTxnId(), TxnStatus.INITIATED, Optional.empty(),
+    SendMoneyTxn txn = EventFixtures.txn(EventFixtures.newTxnId(), TxnStatus.INITIATED,
+        Optional.empty(),
         OptionalLong.empty(), Optional.empty());
 
     assertThatIllegalArgumentException().isThrownBy(() -> mapper.toEvent(txn));

@@ -194,6 +194,7 @@ paths:
                     vat: 65
                     commission: 87
                     totalDebit: 100500
+                    message: "The ledger has not confirmed this transfer yet (ledger-service is slow or unavailable). It is completed or failed automatically; poll GET /api/v1/send-money/{txnId}"
         '400':
           description: |
             `VALIDATION_FAILED` (invalid body, missing or too long `Idempotency-Key`) or
@@ -349,6 +350,7 @@ paths:
                     totalDebit: 100500
                     currency: BDT
                     createdAt: '2026-10-07T09:16:41.030Z'
+                    message: "The ledger has not confirmed this transfer yet (ledger-service is slow or unavailable). It is completed or failed automatically; poll GET /api/v1/send-money/{txnId}"
         '400':
           $ref: '#/components/responses/ValidationFailed'
         '401':
@@ -737,8 +739,10 @@ components:
               $ref: '#/components/examples/SelfTransferProblem'
     Unavailable:
       description: |
-        `OVERLOADED` (a bulkhead is saturated, the request was shed before any write) or
-        `SERVICE_UNAVAILABLE` (PostgreSQL or the ledger is unavailable before any money moved).
+        `OVERLOADED` (a bulkhead is saturated, the request was shed before any write),
+        `LEDGER_UNAVAILABLE` (ledger-service, a separate service, is unreachable: Send Money is refused
+        before any write, so no money moved) or `SERVICE_UNAVAILABLE` (PostgreSQL is unavailable
+        before any money moved).
         Retry the identical request (same `Idempotency-Key`) after `Retry-After` seconds.
       headers:
         Retry-After:
@@ -764,6 +768,14 @@ components:
                 detail: A dependency is unavailable; no money was moved
                 instance: /api/v1/send-money
                 code: SERVICE_UNAVAILABLE
+            ledgerUnavailable:
+              value:
+                type: urn:problem-type:mfs:ledger_unavailable
+                title: Service Unavailable
+                status: 503
+                detail: ledger-service is unavailable. No money was moved; retry after the Retry-After delay
+                instance: /api/v1/send-money
+                code: LEDGER_UNAVAILABLE
     InternalError:
       description: '`INTERNAL_ERROR`: unexpected error. For Send Money, poll the status before retrying.'
       content:
@@ -836,7 +848,7 @@ components:
         | `VALIDATION_FAILED`, `INVALID_QUOTE_TOKEN` | 400 |
         | `UNAUTHORIZED` | 401 |
         | `NOT_FOUND` | 404 |
-        | `OVERLOADED`, `SERVICE_UNAVAILABLE` | 503 |
+        | `OVERLOADED`, `LEDGER_UNAVAILABLE`, `SERVICE_UNAVAILABLE` | 503 |
         | `INTERNAL_ERROR` | 500 |
       enum:
         - INSUFFICIENT_FUNDS
@@ -856,6 +868,7 @@ components:
         - MSISDN_EXISTS
         - OVERLOADED
         - SERVICE_UNAVAILABLE
+        - LEDGER_UNAVAILABLE
         - INTERNAL_ERROR
 
     QuoteRequest:
@@ -949,6 +962,9 @@ components:
           type: [string, 'null']
           format: date-time
           description: Set when COMPLETED; omitted while PROCESSING.
+        message:
+          type: [string, 'null']
+          description: Set while PROCESSING to explain that the ledger has not confirmed the transfer yet; omitted otherwise.
 
     TxnStatusResponse:
       type: object
@@ -989,6 +1005,9 @@ components:
           type: [string, 'null']
           format: date-time
           description: Set when COMPLETED or FAILED; omitted while PROCESSING.
+        message:
+          type: [string, 'null']
+          description: Set while PROCESSING to explain that the ledger has not confirmed the transfer yet; omitted otherwise.
 
     ReconciliationReport:
       type: object

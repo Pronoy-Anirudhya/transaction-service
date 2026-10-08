@@ -1,17 +1,19 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.event.SendMoneyEvent;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import com.bracits.transactionservice.port.out.EventPublisherPort;
-
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.event.model.SendMoneyEvent;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import com.bracits.transactionservice.port.out.publisher.EventPublisherPort;
 import java.util.List;
 import java.util.Optional;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.Function;
 
-/** Records published events and, through {@code lookup}, the stored status of the row at the moment of publishing. */
+/**
+ * Records published events and, through {@code lookup}, the stored status of the row at the moment
+ * of publishing.
+ */
 public final class RecordingEventPublisher implements EventPublisherPort {
 
   private final Function<UUID, Optional<SendMoneyTxn>> lookup;

@@ -1,11 +1,10 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.txn.NewSendMoneyTxn;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import com.bracits.transactionservice.port.out.TxnRepository;
-
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.txn.model.NewSendMoneyTxn;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import com.bracits.transactionservice.port.out.repository.TxnRepository;
 import java.time.Clock;
 import java.time.Duration;
 import java.time.Instant;
@@ -24,36 +23,47 @@ import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.function.UnaryOperator;
 
 /**
- * {@code send_money_txn} in memory with the port's semantics: unique (sender, clientRef), compare-and-set on the status
- * for every finalising update, claim with lease. Failures can be injected per operation; calls are recorded.
+ * {@code send_money_txn} in memory with the port's semantics: unique (sender, clientRef),
+ * compare-and-set on the status for every finalising update, claim with lease. Failures can be
+ * injected per operation; calls are recorded.
  */
 public final class InMemoryTxnRepository implements TxnRepository {
 
-  /** Operations that can be made to fail once with {@link #failNext}. */
+  /**
+   * Operations that can be made to fail once with {@link #failNext}.
+   */
   public enum Op {
     INSERT, FIND_BY_SENDER, FIND_BY_ID, MARK_COMPLETED, MARK_FAILED, SCHEDULE_RECHECK, CLAIM_IN_DOUBT,
     FIND_BY_RANGE, MARK_FAILED_AS_COMPLETED
   }
 
   public record Recheck(UUID txnId, Duration delay) {
+
   }
 
   public record Release(UUID txnId, FailureCode code) {
+
   }
 
   public record Flip(UUID txnId, OptionalLong ledgerTimestamp) {
+
   }
 
   public record Claim(int limit, Duration minAge, Duration lease) {
+
   }
 
   public record Range(UUID fromInclusive, UUID toExclusive, int limit) {
+
   }
 
-  /** Unsigned ordering of the 128 bits, as PostgreSQL compares {@code uuid}. */
+  /**
+   * Unsigned ordering of the 128 bits, as PostgreSQL compares {@code uuid}.
+   */
   public static final Comparator<UUID> UUID_ORDER = (a, b) -> {
     int high = Long.compareUnsigned(a.getMostSignificantBits(), b.getMostSignificantBits());
-    return high != 0 ? high : Long.compareUnsigned(a.getLeastSignificantBits(), b.getLeastSignificantBits());
+    return high != 0 ? high
+        : Long.compareUnsigned(a.getLeastSignificantBits(), b.getLeastSignificantBits());
   };
 
   private final Clock clock;
@@ -70,7 +80,9 @@ public final class InMemoryTxnRepository implements TxnRepository {
     this.clock = clock;
   }
 
-  /** The next call of {@code op} throws {@code failure} (queued; one failure per call). */
+  /**
+   * The next call of {@code op} throws {@code failure} (queued; one failure per call).
+   */
   public synchronized void failNext(Op op, RuntimeException failure) {
     failures.computeIfAbsent(op, k -> new ArrayDeque<>()).add(failure);
   }
@@ -89,7 +101,8 @@ public final class InMemoryTxnRepository implements TxnRepository {
   }
 
   public synchronized SendMoneyTxn get(UUID txnId) {
-    return Optional.ofNullable(rows.get(txnId)).orElseThrow(() -> new AssertionError("no row " + txnId));
+    return Optional.ofNullable(rows.get(txnId))
+        .orElseThrow(() -> new AssertionError("no row " + txnId));
   }
 
   public synchronized List<SendMoneyTxn> all() {
@@ -139,17 +152,20 @@ public final class InMemoryTxnRepository implements TxnRepository {
   public synchronized Optional<UUID> insertIfAbsent(NewSendMoneyTxn txn) {
     insertAttempts.add(txn);
     maybeFail(Op.INSERT);
+
     boolean duplicate = rows.values().stream().anyMatch(r ->
         r.senderWalletId() == txn.senderWalletId() && r.clientRef().equals(txn.clientRef()));
     if (duplicate) {
       return Optional.empty();
     }
+
     rows.put(txn.txnId(), TxnRowBuilder.inserted(txn, clock.instant()).build());
     return Optional.of(txn.txnId());
   }
 
   @Override
-  public synchronized Optional<SendMoneyTxn> findBySenderAndClientRef(long senderWalletId, String clientRef) {
+  public synchronized Optional<SendMoneyTxn> findBySenderAndClientRef(long senderWalletId,
+      String clientRef) {
     maybeFail(Op.FIND_BY_SENDER);
     return rows.values().stream()
         .filter(r -> r.senderWalletId() == senderWalletId && r.clientRef().equals(clientRef))
@@ -170,10 +186,12 @@ public final class InMemoryTxnRepository implements TxnRepository {
   }
 
   @Override
-  public synchronized Optional<SendMoneyTxn> markFailedAndReleaseLimits(UUID txnId, FailureCode code) {
+  public synchronized Optional<SendMoneyTxn> markFailedAndReleaseLimits(UUID txnId,
+      FailureCode code) {
     maybeFail(Op.MARK_FAILED);
-    Optional<SendMoneyTxn> updated = casFrom(txnId, TxnStatus.INITIATED, row -> TxnRowBuilder.from(row)
-        .failed(code, clock.instant()).build());
+    Optional<SendMoneyTxn> updated = casFrom(txnId, TxnStatus.INITIATED,
+        row -> TxnRowBuilder.from(row)
+            .failed(code, clock.instant()).build());
     updated.ifPresent(row -> releases.add(new Release(txnId, code)));
     return updated;
   }
@@ -192,6 +210,7 @@ public final class InMemoryTxnRepository implements TxnRepository {
   public synchronized List<SendMoneyTxn> claimInDoubt(int limit, Duration minAge, Duration lease) {
     claims.add(new Claim(limit, minAge, lease));
     maybeFail(Op.CLAIM_IN_DOUBT);
+
     Instant now = clock.instant();
     List<SendMoneyTxn> due = rows.values().stream()
         .filter(r -> r.status() == TxnStatus.INITIATED)
@@ -200,6 +219,7 @@ public final class InMemoryTxnRepository implements TxnRepository {
         .sorted(Comparator.comparing(r -> r.nextCheckAt().orElseThrow()))
         .limit(limit)
         .toList();
+
     return due.stream().map(r -> {
       SendMoneyTxn leased = TxnRowBuilder.from(r).nextCheckAt(Optional.of(now.plus(lease))).build();
       rows.put(leased.txnId(), leased);
@@ -208,7 +228,8 @@ public final class InMemoryTxnRepository implements TxnRepository {
   }
 
   @Override
-  public synchronized List<SendMoneyTxn> claimUnpublished(int limit, Duration minAge, Duration lease) {
+  public synchronized List<SendMoneyTxn> claimUnpublished(int limit, Duration minAge,
+      Duration lease) {
     Instant now = clock.instant();
     List<SendMoneyTxn> due = rows.values().stream()
         .filter(r -> r.status() != TxnStatus.INITIATED && r.eventPublishedAt().isEmpty())
@@ -216,6 +237,7 @@ public final class InMemoryTxnRepository implements TxnRepository {
         .filter(r -> r.nextCheckAt().map(at -> !at.isAfter(now)).orElse(true))
         .limit(limit)
         .toList();
+
     return due.stream().map(r -> {
       SendMoneyTxn leased = TxnRowBuilder.from(r).nextCheckAt(Optional.of(now.plus(lease))).build();
       rows.put(leased.txnId(), leased);
@@ -226,31 +248,39 @@ public final class InMemoryTxnRepository implements TxnRepository {
   @Override
   public synchronized int markEventsPublished(Collection<UUID> txnIds) {
     int updated = 0;
+
     for (UUID id : txnIds) {
       SendMoneyTxn row = rows.get(id);
       if (row != null && row.eventPublishedAt().isEmpty()) {
-        rows.put(id, TxnRowBuilder.from(row).eventPublishedAt(Optional.of(clock.instant())).build());
+        rows.put(id,
+            TxnRowBuilder.from(row).eventPublishedAt(Optional.of(clock.instant())).build());
         updated++;
       }
     }
+
     return updated;
   }
 
   @Override
-  public synchronized List<SendMoneyTxn> findByTxnIdRange(UUID fromInclusive, UUID toExclusive, int limit) {
+  public synchronized List<SendMoneyTxn> findByTxnIdRange(UUID fromInclusive, UUID toExclusive,
+      int limit) {
     ranges.add(new Range(fromInclusive, toExclusive, limit));
     maybeFail(Op.FIND_BY_RANGE);
+
     return rows.values().stream()
-        .filter(r -> UUID_ORDER.compare(r.txnId(), fromInclusive) >= 0 && UUID_ORDER.compare(r.txnId(), toExclusive) < 0)
+        .filter(r -> UUID_ORDER.compare(r.txnId(), fromInclusive) >= 0
+            && UUID_ORDER.compare(r.txnId(), toExclusive) < 0)
         .sorted(Comparator.comparing(SendMoneyTxn::txnId, UUID_ORDER))
         .limit(limit)
         .toList();
   }
 
   @Override
-  public synchronized Optional<SendMoneyTxn> markFailedAsCompleted(UUID txnId, OptionalLong ledgerTimestamp) {
+  public synchronized Optional<SendMoneyTxn> markFailedAsCompleted(UUID txnId,
+      OptionalLong ledgerTimestamp) {
     flips.add(new Flip(txnId, ledgerTimestamp));
     maybeFail(Op.MARK_FAILED_AS_COMPLETED);
+
     return casFrom(txnId, TxnStatus.FAILED, row -> TxnRowBuilder.from(row)
         .status(TxnStatus.COMPLETED)
         .ledgerTimestamp(ledgerTimestamp)
@@ -278,6 +308,7 @@ public final class InMemoryTxnRepository implements TxnRepository {
     if (row == null || row.status() != expected) {
       return Optional.empty();
     }
+
     SendMoneyTxn updated = update.apply(row);
     rows.put(txnId, updated);
     return Optional.of(updated);

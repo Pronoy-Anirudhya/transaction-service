@@ -1,9 +1,14 @@
 package com.bracits.transactionservice.adapter.out.amqp.mapper;
 
-import com.bracits.transactionservice.adapter.out.amqp.AmqpConstants;
-import com.bracits.transactionservice.adapter.out.amqp.EventFixtures;
-import com.bracits.transactionservice.domain.event.SendMoneyEvent;
+import static org.assertj.core.api.Assertions.assertThat;
+
+import com.bracits.transactionservice.adapter.out.amqp.constant.AmqpConstants;
+import com.bracits.transactionservice.adapter.out.amqp.fixture.EventFixtures;
+import com.bracits.transactionservice.adapter.out.amqp.mapper.impl.EventMessageMapperImpl;
+import com.bracits.transactionservice.domain.event.model.SendMoneyEvent;
 import com.fasterxml.jackson.annotation.JsonInclude;
+import java.nio.charset.StandardCharsets;
+import java.util.UUID;
 import org.junit.jupiter.api.Test;
 import org.springframework.amqp.core.Message;
 import org.springframework.amqp.core.MessageDeliveryMode;
@@ -11,14 +16,10 @@ import org.springframework.amqp.core.MessageProperties;
 import tools.jackson.databind.cfg.DateTimeFeature;
 import tools.jackson.databind.json.JsonMapper;
 
-import java.nio.charset.StandardCharsets;
-import java.util.UUID;
-
-import static org.assertj.core.api.Assertions.assertThat;
-
 class EventMessageMapperTest {
 
-  private final EventMessageMapper mapper = new EventMessageMapper(JsonMapper.builder().build());
+  private final EventMessageMapper mapper = new EventMessageMapperImpl(
+      JsonMapper.builder().build());
 
   @Test
   void completedEventPayloadIsExactlyTheSpecShapeWithNullFailureCode() {
@@ -27,8 +28,10 @@ class EventMessageMapperTest {
     String json = new String(mapper.toBody(event), StandardCharsets.UTF_8);
 
     assertThat(json).isEqualTo(EventFixtures.expectedJson(event));
-    assertThat(json).startsWith("{\"eventId\":\"" + event.eventId() + "\",\"eventType\":\"SendMoneyCompleted\"")
-        .endsWith(",\"currency\":\"BDT\",\"ledgerTimestamp\":1791350858928000000,\"failureCode\":null}");
+    assertThat(json).startsWith(
+            "{\"eventId\":\"" + event.eventId() + "\",\"eventType\":\"SendMoneyCompleted\"")
+        .endsWith(
+            ",\"currency\":\"BDT\",\"ledgerTimestamp\":1791350858928000000,\"failureCode\":null}");
     assertThat(json.getBytes(StandardCharsets.UTF_8).length).isLessThan(512);
   }
 
@@ -44,12 +47,14 @@ class EventMessageMapperTest {
   @Test
   void nullsAndIsoDatesSurviveGlobalJacksonSettings() {
     JsonMapper customised = JsonMapper.builder()
-        .changeDefaultPropertyInclusion(inclusion -> inclusion.withValueInclusion(JsonInclude.Include.NON_NULL))
+        .changeDefaultPropertyInclusion(
+            inclusion -> inclusion.withValueInclusion(JsonInclude.Include.NON_NULL))
         .enable(DateTimeFeature.WRITE_DATES_AS_TIMESTAMPS)
         .build();
     SendMoneyEvent event = EventFixtures.completedEvent(EventFixtures.newTxnId());
 
-    String json = new String(new EventMessageMapper(customised).toBody(event), StandardCharsets.UTF_8);
+    String json = new String(new EventMessageMapperImpl(customised).toBody(event),
+        StandardCharsets.UTF_8);
 
     assertThat(json).isEqualTo(EventFixtures.expectedJson(event));
   }

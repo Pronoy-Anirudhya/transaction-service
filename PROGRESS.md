@@ -8,8 +8,8 @@ Work loop: pick the next unchecked item → implement → `./gradlew clean build
 - [x] `./gradlew clean build` succeeds with zero compile errors and all unit/slice tests passing.
 - [x] End-to-end test (Testcontainers PostgreSQL + RabbitMQ, WireMock ledger): COMPLETED with event published; INSUFFICIENT_FUNDS → FAILED with the limit released; idempotent replay (same key + body → same result; same key + different body → 409); ledger timeout → 202, then repair worker → COMPLETED.
 - [x] `openapi/transaction-api.yaml` is valid OpenAPI 3.1 and matches the implemented endpoints; the event JSON Schema matches the published payload.
-- [x] `docker compose config` is valid for both the default and `full` profiles; Dockerfile builds.
-- [x] README explains build, standalone run, full run with `../ledger-service`, and the API key.
+- [x] `docker compose config` is valid; Dockerfile builds. (The `full` profile was removed on request: ledger-service runs as a separate service, decision L7.)
+- [x] README explains build, running against the separate ledger-service, behaviour while it is unavailable, and the API key.
 
 ## Features (section 2)
 
@@ -25,7 +25,7 @@ Work loop: pick the next unchecked item → implement → `./gradlew clean build
 - [x] 9. Reconciliation endpoint (FR-08, "ledger wins")
 - [x] 10. Caches (P8) and performance rules P1, P5–P15
 - [x] 11. OpenAPI 3.1 contract + event JSON Schema; served at `GET /openapi.yaml` (+ Swagger UI if compatible)
-- [x] 12. Dockerfile + docker-compose (postgres, rabbitmq, ledger-stub, `full` profile) + README
+- [x] 12. Dockerfile + docker-compose (postgres, rabbitmq; ledger-service external) + README
 
 ## Notes
 

@@ -1,27 +1,29 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.config.LogConstants;
-import com.bracits.transactionservice.domain.ledger.PostingOutcome;
-import com.bracits.transactionservice.domain.ledger.PostingRequest;
-import com.bracits.transactionservice.port.out.LedgerPort;
-import org.slf4j.MDC;
-
+import com.bracits.transactionservice.config.constant.LogConstants;
+import com.bracits.transactionservice.domain.ledger.model.PostingOutcome;
+import com.bracits.transactionservice.domain.ledger.model.PostingRequest;
+import com.bracits.transactionservice.port.out.client.LedgerPort;
 import java.util.Deque;
 import java.util.List;
 import java.util.Optional;
 import java.util.concurrent.ConcurrentLinkedDeque;
 import java.util.concurrent.CopyOnWriteArrayList;
+import org.slf4j.MDC;
 
 /**
- * A ledger that answers from a queue of scripted steps (an outcome, an exception or a custom answer), then from the
- * fallback answer if one is set. A call with nothing scripted fails the test. Records every request and the MDC
- * {@code txnId} seen during the call.
+ * A ledger that answers from a queue of scripted steps (an outcome, an exception or a custom
+ * answer), then from the fallback answer if one is set. A call with nothing scripted fails the
+ * test. Records every request and the MDC {@code txnId} seen during the call.
  */
 public final class ScriptedLedgerPort implements LedgerPort {
 
-  /** One scripted answer. */
+  /**
+   * One scripted answer.
+   */
   @FunctionalInterface
   public interface Step {
+
     PostingOutcome answer(PostingRequest request);
   }
 
@@ -47,7 +49,9 @@ public final class ScriptedLedgerPort implements LedgerPort {
     return this;
   }
 
-  /** Answer used once the script is exhausted (useful for concurrent callers). */
+  /**
+   * Answer used once the script is exhausted (useful for concurrent callers).
+   */
   public ScriptedLedgerPort otherwise(Step step) {
     fallback = step;
     return this;
@@ -57,13 +61,16 @@ public final class ScriptedLedgerPort implements LedgerPort {
   public PostingOutcome post(PostingRequest request) {
     requests.add(request);
     mdcTxnIds.add(Optional.ofNullable(MDC.get(LogConstants.MDC_TXN_ID)));
+
     Step step = script.poll();
     if (step == null) {
       step = fallback;
     }
+
     if (step == null) {
       throw new AssertionError("unexpected ledger call for posting " + request.postingId());
     }
+
     return step.answer(request);
   }
 

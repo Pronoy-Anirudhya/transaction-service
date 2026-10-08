@@ -1,17 +1,17 @@
 package com.bracits.transactionservice.api.controller;
 
-import com.bracits.transactionservice.api.ApiConstants;
-import com.bracits.transactionservice.api.dto.FundWalletRequest;
-import com.bracits.transactionservice.api.dto.RegisterWalletRequest;
-import com.bracits.transactionservice.api.dto.RegisterWalletResponse;
-import com.bracits.transactionservice.api.error.ApiErrorCode;
-import com.bracits.transactionservice.api.error.ApiException;
-import com.bracits.transactionservice.api.error.ApiMessages;
+import com.bracits.transactionservice.api.constant.ApiConstants;
+import com.bracits.transactionservice.api.constant.ApiMessages;
+import com.bracits.transactionservice.api.dto.request.FundWalletRequest;
+import com.bracits.transactionservice.api.dto.request.RegisterWalletRequest;
+import com.bracits.transactionservice.api.dto.response.RegisterWalletResponse;
+import com.bracits.transactionservice.api.enums.ApiErrorCode;
+import com.bracits.transactionservice.api.exception.ApiException;
 import com.bracits.transactionservice.api.mapper.WalletApiMapper;
-import com.bracits.transactionservice.application.WalletSupportService;
+import com.bracits.transactionservice.application.result.FundingResult;
 import com.bracits.transactionservice.application.result.RegisterWalletResult;
-import com.bracits.transactionservice.application.result.WalletLookupResult;
-import com.bracits.transactionservice.config.PropertyConstants;
+import com.bracits.transactionservice.application.wallet.service.WalletSupportService;
+import com.bracits.transactionservice.config.constant.PropertyConstants;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Pattern;
@@ -26,7 +26,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-/** FR-09 test-profile support endpoints: register a wallet and fund it from the issuance account. */
+/**
+ * FR-09 test-profile support endpoints: register a wallet and fund it from the issuance account.
+ */
 @RestController
 @Profile(PropertyConstants.PROFILE_TEST)
 @RequestMapping(ApiConstants.WALLETS_PATH)
@@ -40,9 +42,13 @@ public class WalletSupportController {
     this.mapper = mapper;
   }
 
-  /** 201 on first registration, 200 on an identical replay, 409 if the MSISDN exists with other details. */
+  /**
+   * 201 on first registration, 200 on an identical replay, 409 if the MSISDN exists with other
+   * details.
+   */
   @PostMapping
-  public ResponseEntity<RegisterWalletResponse> register(@Valid @RequestBody RegisterWalletRequest request) {
+  public ResponseEntity<RegisterWalletResponse> register(
+      @Valid @RequestBody RegisterWalletRequest request) {
     return switch (wallets.register(mapper.toCommand(request))) {
       case RegisterWalletResult.Registered registered -> ResponseEntity
           .status(registered.created() ? HttpStatus.CREATED : HttpStatus.OK)
@@ -59,8 +65,8 @@ public class WalletSupportController {
       @NotBlank @Size(max = ApiConstants.IDEMPOTENCY_KEY_MAX_LENGTH) String idempotencyKey,
       @Valid @RequestBody FundWalletRequest request) {
     return switch (wallets.fund(mapper.toCommand(msisdn, idempotencyKey, request))) {
-      case WalletLookupResult.Funded funded -> ResponseEntity.ok(mapper.toResponse(funded));
-      case WalletLookupResult.WalletNotFound notFound ->
+      case FundingResult.Funded funded -> ResponseEntity.ok(mapper.toResponse(funded));
+      case FundingResult.WalletNotFound notFound ->
           throw new ApiException(ApiErrorCode.NOT_FOUND, ApiMessages.WALLET_NOT_FOUND);
     };
   }

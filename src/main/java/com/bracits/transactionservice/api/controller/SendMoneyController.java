@@ -1,19 +1,20 @@
 package com.bracits.transactionservice.api.controller;
 
-import com.bracits.transactionservice.api.ApiConstants;
-import com.bracits.transactionservice.api.dto.SendMoneyRequest;
-import com.bracits.transactionservice.api.dto.TxnStatusResponse;
-import com.bracits.transactionservice.api.error.ApiErrorCode;
-import com.bracits.transactionservice.api.error.ApiException;
-import com.bracits.transactionservice.api.error.ApiMessages;
+import com.bracits.transactionservice.api.constant.ApiConstants;
+import com.bracits.transactionservice.api.constant.ApiMessages;
+import com.bracits.transactionservice.api.dto.request.SendMoneyRequest;
+import com.bracits.transactionservice.api.dto.response.TxnStatusResponse;
+import com.bracits.transactionservice.api.enums.ApiErrorCode;
+import com.bracits.transactionservice.api.exception.ApiException;
 import com.bracits.transactionservice.api.mapper.ProblemMapper;
 import com.bracits.transactionservice.api.mapper.SendMoneyApiMapper;
-import com.bracits.transactionservice.application.SendMoneyService;
-import com.bracits.transactionservice.application.TxnQueryService;
+import com.bracits.transactionservice.application.query.service.TxnQueryService;
 import com.bracits.transactionservice.application.result.SendMoneyResult;
+import com.bracits.transactionservice.application.sendmoney.service.SendMoneyService;
 import jakarta.validation.Valid;
 import jakarta.validation.constraints.NotBlank;
 import jakarta.validation.constraints.Size;
+import java.util.UUID;
 import org.springframework.http.HttpStatus;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
@@ -24,9 +25,9 @@ import org.springframework.web.bind.annotation.RequestHeader;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RestController;
 
-import java.util.UUID;
-
-/** FR-02 Send Money (200 COMPLETED / 202 PROCESSING / 409 / 422) and FR-04 status. */
+/**
+ * FR-02 Send Money (200 COMPLETED / 202 PROCESSING / 409 / 422) and FR-04 status.
+ */
 @RestController
 @RequestMapping(ApiConstants.SEND_MONEY_PATH)
 public class SendMoneyController {
@@ -37,7 +38,8 @@ public class SendMoneyController {
   private final ProblemMapper problems;
 
   public SendMoneyController(
-      SendMoneyService sendMoney, TxnQueryService queries, SendMoneyApiMapper mapper, ProblemMapper problems) {
+      SendMoneyService sendMoney, TxnQueryService queries, SendMoneyApiMapper mapper,
+      ProblemMapper problems) {
     this.sendMoney = sendMoney;
     this.queries = queries;
     this.mapper = mapper;
@@ -50,14 +52,18 @@ public class SendMoneyController {
       @NotBlank @Size(max = ApiConstants.IDEMPOTENCY_KEY_MAX_LENGTH) String idempotencyKey,
       @Valid @RequestBody SendMoneyRequest request) {
     SendMoneyResult result = sendMoney.send(mapper.toCommand(request, idempotencyKey));
+
     return switch (result) {
-      case SendMoneyResult.Completed completed -> ResponseEntity.ok(mapper.toResponse(completed.txn()));
+      case SendMoneyResult.Completed completed ->
+          ResponseEntity.ok(mapper.toResponse(completed.txn()));
       case SendMoneyResult.Processing processing ->
           ResponseEntity.status(HttpStatus.ACCEPTED).body(mapper.toResponse(processing.txn()));
       case SendMoneyResult.Rejected rejected ->
           problems.toResponse(problems.toProblem(rejected.code(), rejected.txnId()));
-      case SendMoneyResult.InvalidQuoteToken invalid ->
-          problems.toResponse(problems.toProblem(ApiErrorCode.INVALID_QUOTE_TOKEN, ApiMessages.INVALID_QUOTE_TOKEN));
+      case SendMoneyResult.InvalidQuoteToken invalid -> problems.toResponse(
+          problems.toProblem(ApiErrorCode.INVALID_QUOTE_TOKEN, ApiMessages.INVALID_QUOTE_TOKEN));
+      case SendMoneyResult.LedgerUnavailable unavailable -> problems.toRetryLaterResponse(
+          problems.toProblem(ApiErrorCode.LEDGER_UNAVAILABLE, ApiMessages.LEDGER_UNAVAILABLE));
     };
   }
 

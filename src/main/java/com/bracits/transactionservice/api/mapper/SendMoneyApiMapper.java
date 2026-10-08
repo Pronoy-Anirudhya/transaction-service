@@ -1,66 +1,24 @@
 package com.bracits.transactionservice.api.mapper;
 
-import com.bracits.transactionservice.api.dto.ApiTxnStatus;
-import com.bracits.transactionservice.api.dto.SendMoneyRequest;
-import com.bracits.transactionservice.api.dto.SendMoneyResponse;
-import com.bracits.transactionservice.api.dto.TxnStatusResponse;
+import com.bracits.transactionservice.api.dto.request.SendMoneyRequest;
+import com.bracits.transactionservice.api.dto.response.SendMoneyResponse;
+import com.bracits.transactionservice.api.dto.response.TxnStatusResponse;
+import com.bracits.transactionservice.api.enums.ApiTxnStatus;
 import com.bracits.transactionservice.application.command.SendMoneyCommand;
 import com.bracits.transactionservice.application.result.TxnSummary;
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import org.springframework.stereotype.Component;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
 
-import java.util.Optional;
+/**
+ * Send Money DTOs ↔ use-case command and results.
+ */
+public interface SendMoneyApiMapper {
 
-/** Send Money DTOs ↔ use-case command and results. */
-@Component
-public final class SendMoneyApiMapper {
+  SendMoneyCommand toCommand(SendMoneyRequest request, String idempotencyKey);
 
-  public SendMoneyCommand toCommand(SendMoneyRequest request, String idempotencyKey) {
-    return new SendMoneyCommand(
-        idempotencyKey,
-        request.senderMsisdn(),
-        request.receiverMsisdn(),
-        request.amount(),
-        request.currency(),
-        Optional.ofNullable(request.reference()),
-        Optional.ofNullable(request.quoteToken()));
-  }
+  SendMoneyResponse toResponse(TxnSummary txn);
 
-  public SendMoneyResponse toResponse(TxnSummary txn) {
-    return new SendMoneyResponse(
-        txn.txnId(),
-        toApiStatus(txn.status()),
-        txn.amount(),
-        txn.pricing().fee(),
-        txn.pricing().vat(),
-        txn.pricing().commission(),
-        txn.totalDebit(),
-        txn.completedAt().orElse(null));
-  }
+  TxnStatusResponse toStatusResponse(SendMoneyTxn txn);
 
-  public TxnStatusResponse toStatusResponse(SendMoneyTxn txn) {
-    return new TxnStatusResponse(
-        txn.txnId(),
-        toApiStatus(txn.status()),
-        txn.amount(),
-        txn.pricing().fee(),
-        txn.pricing().vat(),
-        txn.pricing().commission(),
-        txn.totalDebit(),
-        txn.currency(),
-        txn.reference().orElse(null),
-        txn.failureCode().map(FailureCode::name).orElse(null),
-        txn.createdAt(),
-        txn.completedAt().orElse(null));
-  }
-
-  public ApiTxnStatus toApiStatus(TxnStatus status) {
-    return switch (status) {
-      case INITIATED -> ApiTxnStatus.PROCESSING;
-      case COMPLETED -> ApiTxnStatus.COMPLETED;
-      case FAILED -> ApiTxnStatus.FAILED;
-    };
-  }
+  ApiTxnStatus toApiStatus(TxnStatus status);
 }

@@ -1,17 +1,17 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import java.util.Map;
+import java.util.UUID;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.springframework.transaction.support.SimpleTransactionStatus;
 import org.springframework.transaction.support.TransactionCallback;
 import org.springframework.transaction.support.TransactionOperations;
 
-import java.util.Map;
-import java.util.UUID;
-import java.util.concurrent.atomic.AtomicInteger;
-
 /**
- * Runs the callback with a {@link SimpleTransactionStatus}; when the callback sets rollback-only (or throws), the
- * in-memory inserts made inside it are undone and the limit repository is told about the rollback.
+ * Runs the callback with a {@link SimpleTransactionStatus}; when the callback sets rollback-only
+ * (or throws), the in-memory inserts made inside it are undone and the limit repository is told
+ * about the rollback.
  */
 public final class FakeTransactionOperations implements TransactionOperations {
 
@@ -30,17 +30,20 @@ public final class FakeTransactionOperations implements TransactionOperations {
     Map<UUID, SendMoneyTxn> snapshot = txns.snapshot();
     SimpleTransactionStatus status = new SimpleTransactionStatus(true);
     T result;
+
     try {
       result = action.doInTransaction(status);
     } catch (RuntimeException | Error e) {
       rollback(snapshot);
       throw e;
     }
+
     if (status.isRollbackOnly()) {
       rollback(snapshot);
     } else {
       commits.incrementAndGet();
     }
+
     return result;
   }
 
