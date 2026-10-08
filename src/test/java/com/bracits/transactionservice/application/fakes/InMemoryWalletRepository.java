@@ -1,9 +1,8 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.domain.wallet.NewWallet;
-import com.bracits.transactionservice.domain.wallet.Wallet;
-import com.bracits.transactionservice.port.out.WalletRepository;
-
+import com.bracits.transactionservice.domain.wallet.model.NewWallet;
+import com.bracits.transactionservice.domain.wallet.model.Wallet;
+import com.bracits.transactionservice.port.out.repository.WalletRepository;
 import java.time.LocalDate;
 import java.util.HashMap;
 import java.util.List;
@@ -11,7 +10,10 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/** Wallets keyed by MSISDN; {@link #insertIfAbsent} honours the unique MSISDN and records the limit-usage date. */
+/**
+ * Wallets keyed by MSISDN; {@link #insertIfAbsent} honours the unique MSISDN and records the
+ * limit-usage date.
+ */
 public final class InMemoryWalletRepository implements WalletRepository {
 
   private final Map<String, Wallet> byMsisdn = new HashMap<>();
@@ -19,7 +21,9 @@ public final class InMemoryWalletRepository implements WalletRepository {
   private final List<NewWallet> insertAttempts = new CopyOnWriteArrayList<>();
   private long nextId = 1_000L;
 
-  /** Adds or replaces a wallet (e.g. to freeze it). */
+  /**
+   * Adds or replaces a wallet (e.g. to freeze it).
+   */
   public synchronized void put(Wallet wallet) {
     byMsisdn.values().removeIf(w -> w.walletId() == wallet.walletId());
     byMsisdn.put(wallet.msisdn(), wallet);
@@ -45,7 +49,9 @@ public final class InMemoryWalletRepository implements WalletRepository {
     if (byMsisdn.containsKey(wallet.msisdn())) {
       return Optional.empty();
     }
-    Wallet stored = new Wallet(nextId++, wallet.msisdn(), wallet.holderName(), wallet.type(), wallet.status(),
+
+    Wallet stored = new Wallet(nextId++, wallet.msisdn(), wallet.holderName(), wallet.type(),
+        wallet.status(),
         wallet.kycTier(), wallet.ledgerAccountId());
     byMsisdn.put(stored.msisdn(), stored);
     limitUsageDates.put(stored.walletId(), businessDate);

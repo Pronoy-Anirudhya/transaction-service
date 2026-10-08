@@ -1,13 +1,15 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.domain.limit.LimitReservation;
-import com.bracits.transactionservice.port.out.LimitRepository;
-
+import com.bracits.transactionservice.domain.limit.model.LimitReservation;
+import com.bracits.transactionservice.port.out.repository.LimitRepository;
 import java.util.List;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicInteger;
 
-/** Configurable conditional limit update; records every reservation and every rollback of its transaction. */
+/**
+ * Configurable conditional limit update; records every reservation and every rollback of its
+ * transaction.
+ */
 public final class FakeLimitRepository implements LimitRepository {
 
   private volatile boolean accept = true;
@@ -28,7 +30,9 @@ public final class FakeLimitRepository implements LimitRepository {
     return accept;
   }
 
-  /** Called by {@link FakeTransactionOperations} when the surrounding transaction rolls back. */
+  /**
+   * Called by {@link FakeTransactionOperations} when the surrounding transaction rolls back.
+   */
   void rolledBack() {
     rollbacks.incrementAndGet();
   }

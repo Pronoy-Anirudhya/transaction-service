@@ -1,14 +1,15 @@
 package com.bracits.transactionservice.application.result;
 
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.Pricing;
-import com.bracits.transactionservice.domain.TxnStatus;
-
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.model.Pricing;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.UUID;
 
-/** What the Send Money response needs about one transaction. */
+/**
+ * What the Send Money response needs about one transaction.
+ */
 public record TxnSummary(
     UUID txnId,
     TxnStatus status,

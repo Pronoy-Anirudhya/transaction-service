@@ -1,14 +1,16 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.port.out.TxnIdGenerator;
-
+import com.bracits.transactionservice.port.out.generator.TxnIdGenerator;
 import java.time.Clock;
 import java.util.List;
 import java.util.UUID;
 import java.util.concurrent.CopyOnWriteArrayList;
 import java.util.concurrent.atomic.AtomicLong;
 
-/** Time-ordered txnIds in the spec 6.3 shape (clock millis on top, low 8 bits zero), strictly increasing. */
+/**
+ * Time-ordered txnIds in the spec 6.3 shape (clock millis on top, low 8 bits zero), strictly
+ * increasing.
+ */
 public final class SequentialTxnIds implements TxnIdGenerator {
 
   private static final int TIMESTAMP_SHIFT = 16;

@@ -1,6 +1,8 @@
-package com.bracits.transactionservice.application;
+package com.bracits.transactionservice.application.constant;
 
-/** Constants of the application layer: hashing, quote-token format and log/alert messages. */
+/**
+ * Constants of the application layer: hashing, quote-token format and log/alert messages.
+ */
 public final class ApplicationConstants {
 
   // Request hash (FR-03)
@@ -26,6 +28,8 @@ public final class ApplicationConstants {
   public static final String LOG_ALREADY_FINALISED = "row already finalised by another worker; returning its state";
   public static final String LOG_REPLAY_LOOKUP_FAILED = "idempotency look-up after a rejection failed";
   public static final String LOG_REPAIR_CLAIM_FAILED = "repair claim failed (PostgreSQL unavailable?); retrying next run";
+  public static final String LOG_REPAIR_PAUSED = "repair paused: ledger-service is unavailable";
+  public static final String MSG_LEDGER_UNAVAILABLE = "ledger-service is unavailable";
   public static final String LOG_REPAIR_CLAIMED = "repair claimed {} in-doubt transactions";
   public static final String LOG_REPAIR_FAILED = "repair of a transaction failed; it will be retried after the lease";
   public static final String LOG_REPAIR_RESOLVED = "repair resolved transaction as {}";

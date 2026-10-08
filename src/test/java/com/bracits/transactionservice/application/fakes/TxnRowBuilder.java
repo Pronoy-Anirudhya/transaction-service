@@ -1,19 +1,21 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.Pricing;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.txn.NewSendMoneyTxn;
-import com.bracits.transactionservice.domain.txn.RequestHash;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.model.Pricing;
+import com.bracits.transactionservice.domain.txn.model.NewSendMoneyTxn;
+import com.bracits.transactionservice.domain.txn.model.RequestHash;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
 import java.time.Instant;
 import java.time.LocalDate;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
 
-/** Mutable builder of stored {@link SendMoneyTxn} rows for seeding and for the in-memory repository. */
+/**
+ * Mutable builder of stored {@link SendMoneyTxn} rows for seeding and for the in-memory
+ * repository.
+ */
 public final class TxnRowBuilder {
 
   private UUID txnId;
@@ -44,7 +46,9 @@ public final class TxnRowBuilder {
     return b;
   }
 
-  /** The row {@code INSERT … status 'INITIATED', next_check_at = now()} creates (decision B1). */
+  /**
+   * The row {@code INSERT … status 'INITIATED', next_check_at = now()} creates (decision B1).
+   */
   public static TxnRowBuilder inserted(NewSendMoneyTxn txn, Instant now) {
     TxnRowBuilder b = row(txn.txnId());
     b.clientRef = txn.clientRef();
@@ -153,19 +157,26 @@ public final class TxnRowBuilder {
     return this;
   }
 
-  /** A COMPLETED row as the request path leaves it. */
+  /**
+   * A COMPLETED row as the request path leaves it.
+   */
   public TxnRowBuilder completed(long ledgerTs, Instant at) {
-    return status(TxnStatus.COMPLETED).ledgerTimestamp(OptionalLong.of(ledgerTs)).completedAt(Optional.of(at));
+    return status(TxnStatus.COMPLETED).ledgerTimestamp(OptionalLong.of(ledgerTs))
+        .completedAt(Optional.of(at));
   }
 
-  /** A FAILED row as a definitive ledger rejection leaves it. */
+  /**
+   * A FAILED row as a definitive ledger rejection leaves it.
+   */
   public TxnRowBuilder failed(FailureCode code, Instant at) {
     return status(TxnStatus.FAILED).failureCode(Optional.of(code)).completedAt(Optional.of(at));
   }
 
   public SendMoneyTxn build() {
-    return new SendMoneyTxn(txnId, clientRef, requestHash, senderWalletId, receiverWalletId, amount, pricing,
-        currency, reference, businessDate, status, failureCode, ledgerAttempts, nextCheckAt, ledgerTimestamp,
+    return new SendMoneyTxn(txnId, clientRef, requestHash, senderWalletId, receiverWalletId, amount,
+        pricing,
+        currency, reference, businessDate, status, failureCode, ledgerAttempts, nextCheckAt,
+        ledgerTimestamp,
         createdAt, completedAt, eventPublishedAt);
   }
 }

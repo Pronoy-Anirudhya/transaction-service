@@ -1,11 +1,10 @@
 package com.bracits.transactionservice.application.fakes;
 
-import com.bracits.transactionservice.domain.ledger.AccountBalance;
-import com.bracits.transactionservice.domain.ledger.PostingLookup;
-import com.bracits.transactionservice.domain.ledger.PostingLookupStatus;
-import com.bracits.transactionservice.port.out.LedgerAccountNotFoundException;
-import com.bracits.transactionservice.port.out.LedgerQueryPort;
-
+import com.bracits.transactionservice.domain.ledger.enums.PostingLookupStatus;
+import com.bracits.transactionservice.domain.ledger.model.AccountBalance;
+import com.bracits.transactionservice.domain.ledger.model.PostingLookup;
+import com.bracits.transactionservice.port.out.client.LedgerQueryPort;
+import com.bracits.transactionservice.port.out.exception.LedgerAccountNotFoundException;
 import java.util.List;
 import java.util.Map;
 import java.util.OptionalLong;
@@ -13,10 +12,14 @@ import java.util.UUID;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
 
-/** Posting look-ups and balances answered from maps; unknown postings are NOT_FOUND, unknown accounts 404. */
+/**
+ * Posting look-ups and balances answered from maps; unknown postings are NOT_FOUND, unknown
+ * accounts 404.
+ */
 public final class FakeLedgerQueryPort implements LedgerQueryPort {
 
   public record Lookup(UUID postingId, int legCount) {
+
   }
 
   private final Map<UUID, PostingLookup> postings = new ConcurrentHashMap<>();
@@ -44,11 +47,14 @@ public final class FakeLedgerQueryPort implements LedgerQueryPort {
   @Override
   public PostingLookup lookupPosting(UUID postingId, int legCount) {
     lookups.add(new Lookup(postingId, legCount));
+
     RuntimeException failure = lookupFailures.get(postingId);
     if (failure != null) {
       throw failure;
     }
-    return postings.getOrDefault(postingId, new PostingLookup(PostingLookupStatus.NOT_FOUND, OptionalLong.empty()));
+
+    return postings.getOrDefault(postingId,
+        new PostingLookup(PostingLookupStatus.NOT_FOUND, OptionalLong.empty()));
   }
 
   @Override
@@ -57,10 +63,12 @@ public final class FakeLedgerQueryPort implements LedgerQueryPort {
     if (failure != null) {
       throw failure;
     }
+
     AccountBalance balance = balances.get(accountId);
     if (balance == null) {
       throw new LedgerAccountNotFoundException("no account " + accountId);
     }
+
     return balance;
   }
 
