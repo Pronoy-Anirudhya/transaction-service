@@ -1,6 +1,9 @@
-package com.bracits.transactionservice.port.out;
+package com.bracits.transactionservice.port.out.exception;
 
-/** The ledger could not give an answer (503, I/O error, timeout or unexpected status). Safe to retry later. */
+/**
+ * The ledger could not give an answer (503, I/O error, timeout or unexpected status). Safe to retry
+ * later.
+ */
 public class LedgerUnavailableException extends RuntimeException {
 
   public LedgerUnavailableException(String message) {
