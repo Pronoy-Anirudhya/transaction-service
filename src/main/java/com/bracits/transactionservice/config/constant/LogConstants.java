@@ -1,6 +1,8 @@
-package com.bracits.transactionservice.config;
+package com.bracits.transactionservice.config.constant;
 
-/** MDC keys and log field names (spec 12, observability). */
+/**
+ * MDC keys and log field names (spec 12, observability).
+ */
 public final class LogConstants {
 
   public static final String MDC_TXN_ID = "txnId";

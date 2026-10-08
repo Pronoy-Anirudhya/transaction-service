@@ -1,11 +1,11 @@
-package com.bracits.transactionservice.config;
+package com.bracits.transactionservice.config.properties;
 
+import com.bracits.transactionservice.config.constant.PropertyConstants;
 import jakarta.validation.constraints.NotNull;
 import jakarta.validation.constraints.Positive;
+import java.time.Duration;
 import org.springframework.boot.context.properties.ConfigurationProperties;
 import org.springframework.validation.annotation.Validated;
-
-import java.time.Duration;
 
 /**
  * {@code poc.repair.*}: repair worker (spec 8.4). {@code minAge} = only rows older than this (3 s);
@@ -25,4 +25,5 @@ public record RepairProperties(
     @NotNull Duration maxBackoff,
     @Positive int alertAfterAttempts,
     @Positive int parallelism) {
+
 }

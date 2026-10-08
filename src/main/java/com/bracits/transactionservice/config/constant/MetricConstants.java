@@ -1,6 +1,9 @@
-package com.bracits.transactionservice.config;
+package com.bracits.transactionservice.config.constant;
 
-/** Metric names and tags (spec 12). Micrometer names use dots; Prometheus renders them with underscores. */
+/**
+ * Metric names and tags (spec 12). Micrometer names use dots; Prometheus renders them with
+ * underscores.
+ */
 public final class MetricConstants {
 
   public static final String SENDMONEY_REQUESTS = "sendmoney.requests";
@@ -24,6 +27,7 @@ public final class MetricConstants {
   public static final String RESULT_ERROR = "error";
 
   public static final String NONE = "none";
+  public static final String CODE_LEDGER_UNAVAILABLE = "LEDGER_UNAVAILABLE";
 
   private MetricConstants() {
   }
