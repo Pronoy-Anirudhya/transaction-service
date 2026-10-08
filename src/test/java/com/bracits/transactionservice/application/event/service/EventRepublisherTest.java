@@ -1,21 +1,4 @@
-package com.bracits.transactionservice.application;
-
-import com.bracits.transactionservice.adapter.out.amqp.EventFixtures;
-import com.bracits.transactionservice.application.mapper.SendMoneyEventMapper;
-import com.bracits.transactionservice.config.EventsProperties;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.event.SendMoneyEvent;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import com.bracits.transactionservice.port.out.EventPublisherPort;
-import com.bracits.transactionservice.port.out.TxnRepository;
-import org.junit.jupiter.api.Test;
-
-import java.time.Duration;
-import java.util.ArrayList;
-import java.util.List;
-import java.util.Optional;
-import java.util.OptionalLong;
-import java.util.UUID;
+package com.bracits.transactionservice.application.event.service;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.any;
@@ -25,21 +8,41 @@ import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.verifyNoMoreInteractions;
 import static org.mockito.Mockito.when;
 
+import com.bracits.transactionservice.adapter.out.amqp.fixture.EventFixtures;
+import com.bracits.transactionservice.application.event.service.impl.EventRepublisherImpl;
+import com.bracits.transactionservice.application.mapper.impl.SendMoneyEventMapperImpl;
+import com.bracits.transactionservice.config.properties.EventsProperties;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.event.model.SendMoneyEvent;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import com.bracits.transactionservice.port.out.publisher.EventPublisherPort;
+import com.bracits.transactionservice.port.out.repository.TxnRepository;
+import java.time.Duration;
+import java.util.ArrayList;
+import java.util.List;
+import java.util.Optional;
+import java.util.OptionalLong;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+
 class EventRepublisherTest {
 
-  private static final EventsProperties PROPERTIES = EventFixtures.properties(Duration.ofSeconds(5), 500);
+  private static final EventsProperties PROPERTIES = EventFixtures.properties(Duration.ofSeconds(5),
+      500);
 
   private final TxnRepository txnRepository = mock(TxnRepository.class);
   private final RecordingPublisher publisher = new RecordingPublisher();
   private final EventRepublisher republisher =
-      new EventRepublisher(txnRepository, publisher, new SendMoneyEventMapper(), PROPERTIES);
+      new EventRepublisherImpl(txnRepository, publisher, new SendMoneyEventMapperImpl(),
+          PROPERTIES);
 
   @Test
   void claimsWithConfiguredBatchMinAgeAndLeaseAndRepublishesEachRow() {
     UUID completed = EventFixtures.newTxnId();
     UUID failed = EventFixtures.newTxnId();
     when(txnRepository.claimUnpublished(500, Duration.ofSeconds(10), Duration.ofSeconds(30)))
-        .thenReturn(List.of(EventFixtures.completedTxn(completed), EventFixtures.failedTxn(failed)));
+        .thenReturn(
+            List.of(EventFixtures.completedTxn(completed), EventFixtures.failedTxn(failed)));
 
     int claimed = republisher.republish();
 
@@ -59,7 +62,7 @@ class EventRepublisherTest {
     republisher.republish();
 
     assertThat(publisher.events.getFirst().eventId())
-        .isEqualTo(new SendMoneyEventMapper().toEvent(row).eventId());
+        .isEqualTo(new SendMoneyEventMapperImpl().toEvent(row).eventId());
   }
 
   @Test
@@ -73,7 +76,8 @@ class EventRepublisherTest {
   @Test
   void oneBadRowDoesNotStopTheBatch() {
     UUID good = EventFixtures.newTxnId();
-    SendMoneyTxn initiated = EventFixtures.txn(EventFixtures.newTxnId(), TxnStatus.INITIATED, Optional.empty(),
+    SendMoneyTxn initiated = EventFixtures.txn(EventFixtures.newTxnId(), TxnStatus.INITIATED,
+        Optional.empty(),
         OptionalLong.empty(), Optional.empty());
     when(txnRepository.claimUnpublished(anyInt(), any(), any()))
         .thenReturn(List.of(initiated, EventFixtures.completedTxn(good)));

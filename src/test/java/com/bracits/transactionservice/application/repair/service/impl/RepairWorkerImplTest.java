@@ -1,30 +1,4 @@
-package com.bracits.transactionservice.application;
-
-import ch.qos.logback.classic.Level;
-import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Claim;
-import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Op;
-import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Recheck;
-import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Release;
-import com.bracits.transactionservice.application.fakes.LogCapture;
-import com.bracits.transactionservice.application.fakes.SendMoneyHarness;
-import com.bracits.transactionservice.application.fakes.TxnRowBuilder;
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.event.EventType;
-import com.bracits.transactionservice.domain.event.SendMoneyEvent;
-import com.bracits.transactionservice.domain.ledger.PostingOutcome;
-import com.bracits.transactionservice.domain.ledger.UnknownReason;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import org.junit.jupiter.api.Test;
-import org.junit.jupiter.params.ParameterizedTest;
-import org.junit.jupiter.params.provider.CsvSource;
-import org.junit.jupiter.params.provider.EnumSource;
-import org.springframework.dao.DataAccessResourceFailureException;
-import org.springframework.resilience.InvocationRejectedException;
-
-import java.time.Duration;
-import java.util.Optional;
-import java.util.UUID;
+package com.bracits.transactionservice.application.repair.service.impl;
 
 import static com.bracits.transactionservice.application.fakes.Fixtures.AMOUNT;
 import static com.bracits.transactionservice.application.fakes.Fixtures.LEDGER_TS;
@@ -38,14 +12,42 @@ import static com.bracits.transactionservice.application.fakes.Fixtures.sender;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 
-class RepairWorkerTest {
+import ch.qos.logback.classic.Level;
+import com.bracits.transactionservice.application.constant.ApplicationConstants;
+import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Claim;
+import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Op;
+import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Recheck;
+import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Release;
+import com.bracits.transactionservice.application.fakes.LogCapture;
+import com.bracits.transactionservice.application.fakes.SendMoneyHarness;
+import com.bracits.transactionservice.application.fakes.TxnRowBuilder;
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.event.enums.EventType;
+import com.bracits.transactionservice.domain.event.model.SendMoneyEvent;
+import com.bracits.transactionservice.domain.ledger.enums.UnknownReason;
+import com.bracits.transactionservice.domain.ledger.model.PostingOutcome;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import java.time.Duration;
+import java.util.Optional;
+import java.util.UUID;
+import org.junit.jupiter.api.Test;
+import org.junit.jupiter.params.ParameterizedTest;
+import org.junit.jupiter.params.provider.CsvSource;
+import org.junit.jupiter.params.provider.EnumSource;
+import org.springframework.dao.DataAccessResourceFailureException;
+import org.springframework.resilience.InvocationRejectedException;
+
+class RepairWorkerImplTest {
 
   private static final PostingOutcome POSTED = new PostingOutcome.Posted(LEDGER_TS, true);
 
   private final SendMoneyHarness h = new SendMoneyHarness();
-  private final RepairWorker worker = h.repairWorker;
+  private final RepairWorkerImpl worker = h.repairWorker;
 
-  /** An in-doubt row older than the minimum age and due for a recheck. */
+  /**
+   * An in-doubt row older than the minimum age and due for a recheck.
+   */
   private SendMoneyTxn seedInDoubt(int ledgerAttempts) {
     SendMoneyTxn row = TxnRowBuilder.row(h.ids.next())
         .clientRef("key-" + h.ids.issued().size())
@@ -53,6 +55,7 @@ class RepairWorkerTest {
         .createdAt(NOW.minusSeconds(10))
         .nextCheckAt(Optional.of(NOW.minusSeconds(1)))
         .build();
+
     h.txns.put(row);
     return row;
   }
@@ -66,7 +69,8 @@ class RepairWorkerTest {
   void claimsWithTheConfiguredBatchMinAgeAndLease() {
     worker.run();
 
-    assertThat(h.txns.claims()).containsExactly(new Claim(200, Duration.ofSeconds(3), Duration.ofSeconds(30)));
+    assertThat(h.txns.claims()).containsExactly(
+        new Claim(200, Duration.ofSeconds(3), Duration.ofSeconds(30)));
   }
 
   @Test
@@ -77,12 +81,14 @@ class RepairWorkerTest {
     worker.run();
 
     assertThat(h.ledger.requests())
-        .containsExactly(h.legPlanner.plan(row.txnId(), sender(), receiver(), AMOUNT, STANDARD_PRICING));
+        .containsExactly(
+            h.legPlanner.plan(row.txnId(), sender(), receiver(), AMOUNT, STANDARD_PRICING));
   }
 
   @Test
   void resendIsIdenticalToTheRequestPathsPosting() {
-    h.ledger.thenReturn(new PostingOutcome.Unknown(UnknownReason.LEDGER_TIMEOUT)).thenReturn(POSTED);
+    h.ledger.thenReturn(new PostingOutcome.Unknown(UnknownReason.LEDGER_TIMEOUT))
+        .thenReturn(POSTED);
     h.service.send(command());
     h.clock.advance(Duration.ofSeconds(5));
 
@@ -90,7 +96,8 @@ class RepairWorkerTest {
 
     assertThat(h.ledger.requests()).hasSize(2);
     assertThat(h.ledger.requests().get(1)).isEqualTo(h.ledger.requests().get(0));
-    assertThat(h.txns.all()).singleElement().extracting(SendMoneyTxn::status).isEqualTo(TxnStatus.COMPLETED);
+    assertThat(h.txns.all()).singleElement().extracting(SendMoneyTxn::status)
+        .isEqualTo(TxnStatus.COMPLETED);
   }
 
   @Test
@@ -120,8 +127,10 @@ class RepairWorkerTest {
 
     assertThat(h.txns.get(row.txnId()).status()).isEqualTo(TxnStatus.FAILED);
     assertThat(h.txns.get(row.txnId()).failureCode()).contains(FailureCode.INSUFFICIENT_FUNDS);
-    assertThat(h.txns.releases()).containsExactly(new Release(row.txnId(), FailureCode.INSUFFICIENT_FUNDS));
-    assertThat(h.events.events()).extracting(SendMoneyEvent::eventType).containsExactly(EventType.SEND_MONEY_FAILED);
+    assertThat(h.txns.releases()).containsExactly(
+        new Release(row.txnId(), FailureCode.INSUFFICIENT_FUNDS));
+    assertThat(h.events.events()).extracting(SendMoneyEvent::eventType)
+        .containsExactly(EventType.SEND_MONEY_FAILED);
     assertThat(repairCount("failed")).isEqualTo(1.0);
   }
 
@@ -133,7 +142,8 @@ class RepairWorkerTest {
 
     worker.run();
 
-    assertThat(h.txns.rechecks()).containsExactly(new Recheck(row.txnId(), Duration.ofSeconds(expectedSeconds)));
+    assertThat(h.txns.rechecks()).containsExactly(
+        new Recheck(row.txnId(), Duration.ofSeconds(expectedSeconds)));
     SendMoneyTxn stored = h.txns.get(row.txnId());
     assertThat(stored.status()).isEqualTo(TxnStatus.INITIATED);
     assertThat(stored.ledgerAttempts()).isEqualTo(attempts + 1);
@@ -142,7 +152,8 @@ class RepairWorkerTest {
   }
 
   @ParameterizedTest
-  @CsvSource({"0, 1", "1, 2", "2, 4", "3, 8", "4, 16", "5, 32", "6, 60", "7, 60", "30, 60", "31, 60",
+  @CsvSource({"0, 1", "1, 2", "2, 4", "3, 8", "4, 16", "5, 32", "6, 60", "7, 60", "30, 60",
+      "31, 60",
       "62, 60", "63, 60", "64, 60", "2147483647, 60", "-1, 1", "-2147483648, 1"})
   void backoffDoublesFromOneSecondAndIsCappedAtSixty(int attempts, long expectedSeconds) {
     assertThat(worker.backoff(attempts)).isEqualTo(Duration.ofSeconds(expectedSeconds));
@@ -186,11 +197,13 @@ class RepairWorkerTest {
     SendMoneyTxn row = seedInDoubt(0);
     h.wallets.remove(RECEIVER_ID);
 
-    try (LogCapture log = LogCapture.of(RepairWorker.class)) {
+    try (LogCapture log = LogCapture.of(RepairWorkerImpl.class)) {
       worker.run();
 
-      assertThat(log.messages(Level.ERROR)).anySatisfy(m -> assertThat(m).contains("wallet " + RECEIVER_ID));
+      assertThat(log.messages(Level.ERROR)).anySatisfy(
+          m -> assertThat(m).contains("wallet " + RECEIVER_ID));
     }
+
     assertThat(h.ledger.requests()).isEmpty();
     assertThat(h.txns.rechecks()).containsExactly(new Recheck(row.txnId(), Duration.ofSeconds(60)));
     assertThat(h.txns.get(row.txnId()).status()).isEqualTo(TxnStatus.INITIATED);
@@ -212,11 +225,13 @@ class RepairWorkerTest {
     seedInDoubt(9);
     h.ledger.thenReturn(new PostingOutcome.Unknown(UnknownReason.LEDGER_TIMEOUT));
 
-    try (LogCapture log = LogCapture.of(RepairWorker.class)) {
+    try (LogCapture log = LogCapture.of(RepairWorkerImpl.class)) {
       worker.run();
 
-      assertThat(log.templates(Level.ERROR)).containsExactly(ApplicationConstants.ALERT_REPAIR_ATTEMPTS);
-      assertThat(log.messages(Level.ERROR)).singleElement().asString().contains("after 10 ledger attempts");
+      assertThat(log.templates(Level.ERROR)).containsExactly(
+          ApplicationConstants.ALERT_REPAIR_ATTEMPTS);
+      assertThat(log.messages(Level.ERROR)).singleElement().asString()
+          .contains("after 10 ledger attempts");
     }
   }
 
@@ -225,10 +240,11 @@ class RepairWorkerTest {
     seedInDoubt(8);
     h.ledger.thenReturn(new PostingOutcome.Unknown(UnknownReason.LEDGER_TIMEOUT));
 
-    try (LogCapture log = LogCapture.of(RepairWorker.class)) {
+    try (LogCapture log = LogCapture.of(RepairWorkerImpl.class)) {
       worker.run();
 
-      assertThat(log.templates(Level.ERROR)).doesNotContain(ApplicationConstants.ALERT_REPAIR_ATTEMPTS);
+      assertThat(log.templates(Level.ERROR)).doesNotContain(
+          ApplicationConstants.ALERT_REPAIR_ATTEMPTS);
     }
   }
 
@@ -298,7 +314,8 @@ class RepairWorkerTest {
     worker.run();
 
     assertThat(h.txns.all()).extracting(SendMoneyTxn::status).containsOnly(TxnStatus.COMPLETED);
-    assertThat(h.events.events()).extracting(SendMoneyEvent::txnId).containsExactlyInAnyOrder(a, b, c);
+    assertThat(h.events.events()).extracting(SendMoneyEvent::txnId)
+        .containsExactlyInAnyOrder(a, b, c);
     assertThat(repairCount("completed")).isEqualTo(3.0);
   }
 
@@ -315,5 +332,15 @@ class RepairWorkerTest {
     assertThat(h.txns.get(row.txnId()).ledgerTimestamp()).hasValue(5L);
     assertThat(h.events.events()).isEmpty();
     assertThat(repairCount("completed")).isEqualTo(1.0);
+  }
+
+  @Test
+  void pausesWhileTheLedgerIsDown() {
+    h.ledgerHealth.down();
+
+    worker.run();
+
+    assertThat(h.txns.claims()).isEmpty();
+    assertThat(h.ledger.requests()).isEmpty();
   }
 }

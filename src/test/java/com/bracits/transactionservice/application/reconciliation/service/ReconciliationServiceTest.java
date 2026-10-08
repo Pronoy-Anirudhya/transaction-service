@@ -1,35 +1,37 @@
-package com.bracits.transactionservice.application;
+package com.bracits.transactionservice.application.reconciliation.service;
+
+import static com.bracits.transactionservice.application.fakes.Fixtures.LEDGER_TS;
+import static com.bracits.transactionservice.application.fakes.Fixtures.NOW;
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.assertj.core.api.Assertions.assertThatThrownBy;
+import static org.assertj.core.api.Assertions.tuple;
 
 import ch.qos.logback.classic.Level;
-import com.bracits.transactionservice.application.fakes.FakeLedgerQueryPort;
+import com.bracits.transactionservice.application.constant.ApplicationConstants;
+import com.bracits.transactionservice.application.enums.ReconciliationAction;
+import com.bracits.transactionservice.application.enums.ReconciliationLedgerView;
 import com.bracits.transactionservice.application.fakes.FakeLedgerQueryPort.Lookup;
+import com.bracits.transactionservice.application.fakes.FakeLedgerQueryPort;
 import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Flip;
 import com.bracits.transactionservice.application.fakes.InMemoryTxnRepository.Range;
 import com.bracits.transactionservice.application.fakes.LogCapture;
 import com.bracits.transactionservice.application.fakes.SendMoneyHarness;
 import com.bracits.transactionservice.application.fakes.TxnRowBuilder;
-import com.bracits.transactionservice.application.result.ReconciliationResult;
-import com.bracits.transactionservice.application.result.ReconciliationResult.Action;
-import com.bracits.transactionservice.application.result.ReconciliationResult.LedgerView;
+import com.bracits.transactionservice.application.reconciliation.service.impl.ReconciliationServiceImpl;
 import com.bracits.transactionservice.application.result.ReconciliationResult.Mismatch;
-import com.bracits.transactionservice.domain.FailureCode;
-import com.bracits.transactionservice.domain.Pricing;
-import com.bracits.transactionservice.domain.TxnStatus;
-import com.bracits.transactionservice.domain.event.EventType;
-import com.bracits.transactionservice.domain.txn.SendMoneyTxn;
-import com.bracits.transactionservice.domain.txn.TxnIds;
-import com.bracits.transactionservice.port.out.LedgerUnavailableException;
-import org.junit.jupiter.api.Test;
-
+import com.bracits.transactionservice.application.result.ReconciliationResult;
+import com.bracits.transactionservice.domain.enums.FailureCode;
+import com.bracits.transactionservice.domain.enums.TxnStatus;
+import com.bracits.transactionservice.domain.event.enums.EventType;
+import com.bracits.transactionservice.domain.model.Pricing;
+import com.bracits.transactionservice.domain.txn.model.SendMoneyTxn;
+import com.bracits.transactionservice.domain.txn.util.TxnIds;
+import com.bracits.transactionservice.port.out.exception.LedgerUnavailableException;
 import java.time.Instant;
 import java.util.Optional;
 import java.util.OptionalLong;
 import java.util.UUID;
-
-import static com.bracits.transactionservice.application.fakes.Fixtures.LEDGER_TS;
-import static com.bracits.transactionservice.application.fakes.Fixtures.NOW;
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.assertj.core.api.Assertions.tuple;
+import org.junit.jupiter.api.Test;
 
 class ReconciliationServiceTest {
 
@@ -42,12 +44,16 @@ class ReconciliationServiceTest {
 
   private SendMoneyTxn seed(TxnStatus status) {
     UUID txnId = h.ids.next();
-    TxnRowBuilder row = TxnRowBuilder.row(txnId).clientRef(txnId.toString()).createdAt(NOW.minusSeconds(60));
+    TxnRowBuilder row = TxnRowBuilder.row(txnId).clientRef(txnId.toString())
+        .createdAt(NOW.minusSeconds(60));
+
     switch (status) {
       case COMPLETED -> row.completed(LEDGER_TS, NOW.minusSeconds(59));
       case FAILED -> row.failed(FailureCode.INSUFFICIENT_FUNDS, NOW.minusSeconds(59));
-      case INITIATED -> { }
+      case INITIATED -> {
+      }
     }
+
     SendMoneyTxn built = row.build();
     h.txns.put(built);
     return built;
@@ -76,14 +82,18 @@ class ReconciliationServiceTest {
     SendMoneyTxn failed = seed(TxnStatus.FAILED);
     ledger.posted(failed.txnId(), OptionalLong.of(LEDGER_TS));
 
-    try (LogCapture log = LogCapture.of(ReconciliationService.class)) {
+    try (LogCapture log = LogCapture.of(ReconciliationServiceImpl.class)) {
       ReconciliationResult result = service.reconcile(FROM, TO);
 
       assertThat(result.mismatches()).containsExactly(
-          new Mismatch(failed.txnId(), TxnStatus.FAILED, LedgerView.POSTED, Action.FLIPPED_TO_COMPLETED));
-      assertThat(log.templates(Level.ERROR)).containsExactly(ApplicationConstants.ALERT_LEDGER_WINS);
+          new Mismatch(failed.txnId(), TxnStatus.FAILED, ReconciliationLedgerView.POSTED,
+              ReconciliationAction.FLIPPED_TO_COMPLETED));
+      assertThat(log.templates(Level.ERROR)).containsExactly(
+          ApplicationConstants.ALERT_LEDGER_WINS);
     }
-    assertThat(h.txns.flips()).containsExactly(new Flip(failed.txnId(), OptionalLong.of(LEDGER_TS)));
+
+    assertThat(h.txns.flips()).containsExactly(
+        new Flip(failed.txnId(), OptionalLong.of(LEDGER_TS)));
     SendMoneyTxn stored = h.txns.get(failed.txnId());
     assertThat(stored.status()).isEqualTo(TxnStatus.COMPLETED);
     assertThat(stored.failureCode()).isEmpty();
@@ -112,13 +122,16 @@ class ReconciliationServiceTest {
   void completedButNotPostedRaisesAnAlertAndChangesNothing() {
     SendMoneyTxn completed = seed(TxnStatus.COMPLETED);
 
-    try (LogCapture log = LogCapture.of(ReconciliationService.class)) {
+    try (LogCapture log = LogCapture.of(ReconciliationServiceImpl.class)) {
       ReconciliationResult result = service.reconcile(FROM, TO);
 
       assertThat(result.mismatches()).containsExactly(
-          new Mismatch(completed.txnId(), TxnStatus.COMPLETED, LedgerView.NOT_FOUND, Action.ALERT_RAISED));
-      assertThat(log.templates(Level.ERROR)).containsExactly(ApplicationConstants.ALERT_COMPLETED_NOT_POSTED);
+          new Mismatch(completed.txnId(), TxnStatus.COMPLETED, ReconciliationLedgerView.NOT_FOUND,
+              ReconciliationAction.ALERT_RAISED));
+      assertThat(log.templates(Level.ERROR)).containsExactly(
+          ApplicationConstants.ALERT_COMPLETED_NOT_POSTED);
     }
+
     assertThat(h.txns.get(completed.txnId())).isEqualTo(completed);
     assertThat(h.txns.flips()).isEmpty();
     assertThat(h.events.events()).isEmpty();
@@ -132,7 +145,8 @@ class ReconciliationServiceTest {
     ReconciliationResult result = service.reconcile(FROM, TO);
 
     assertThat(result.mismatches()).containsExactly(
-        new Mismatch(completed.txnId(), TxnStatus.COMPLETED, LedgerView.UNKNOWN, Action.NOT_CHECKED));
+        new Mismatch(completed.txnId(), TxnStatus.COMPLETED, ReconciliationLedgerView.UNKNOWN,
+            ReconciliationAction.NOT_CHECKED));
     assertThat(h.txns.get(completed.txnId())).isEqualTo(completed);
   }
 
@@ -181,7 +195,8 @@ class ReconciliationServiceTest {
 
     assertThat(result.truncated()).isTrue();
     assertThat(result.checked()).isEqualTo(2);
-    assertThat(result.mismatches()).extracting(Mismatch::txnId).containsExactly(first.txnId(), second.txnId());
+    assertThat(result.mismatches()).extracting(Mismatch::txnId)
+        .containsExactly(first.txnId(), second.txnId());
     assertThat(ledger.lookups()).extracting(Lookup::postingId).doesNotContain(third.txnId());
   }
 
@@ -212,9 +227,9 @@ class ReconciliationServiceTest {
 
     assertThat(result.checked()).isEqualTo(5);
     assertThat(result.mismatches()).extracting(Mismatch::txnId, Mismatch::action).containsExactly(
-        tuple(flip.txnId(), Action.FLIPPED_TO_COMPLETED),
-        tuple(alert.txnId(), Action.ALERT_RAISED),
-        tuple(unknown.txnId(), Action.NOT_CHECKED));
+        tuple(flip.txnId(), ReconciliationAction.FLIPPED_TO_COMPLETED),
+        tuple(alert.txnId(), ReconciliationAction.ALERT_RAISED),
+        tuple(unknown.txnId(), ReconciliationAction.NOT_CHECKED));
   }
 
   @Test
@@ -225,5 +240,14 @@ class ReconciliationServiceTest {
 
     assertThat(result.checked()).isZero();
     assertThat(ledger.lookups()).extracting(Lookup::postingId).doesNotContain(inside.txnId());
+  }
+
+  @Test
+  void ledgerDownFailsFastWithoutScanning() {
+    h.ledgerHealth.down();
+
+    assertThatThrownBy(() -> service.reconcile(FROM, TO))
+        .isInstanceOf(LedgerUnavailableException.class);
+    assertThat(h.txns.ranges()).isEmpty();
   }
 }
