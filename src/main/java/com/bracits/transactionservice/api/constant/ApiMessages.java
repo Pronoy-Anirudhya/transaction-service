@@ -1,12 +1,19 @@
-package com.bracits.transactionservice.api.error;
+package com.bracits.transactionservice.api.constant;
 
-/** Problem Details {@code detail} texts and API log messages. */
+/**
+ * Problem Details {@code detail} texts and API log messages.
+ */
 public final class ApiMessages {
 
   public static final String UNAUTHORIZED = "Missing or invalid API key";
   public static final String TXN_NOT_FOUND = "No transaction with this txnId";
   public static final String WALLET_NOT_FOUND = "No wallet with this MSISDN";
   public static final String OVERLOADED = "The service is saturated; retry after the Retry-After delay";
+  public static final String LEDGER_UNAVAILABLE =
+      "ledger-service is unavailable. No money was moved; retry after the Retry-After delay";
+  public static final String PROCESSING =
+      "The ledger has not confirmed this transfer yet (ledger-service is slow or unavailable). "
+          + "It is completed or failed automatically; poll GET /api/v1/send-money/{txnId}";
   public static final String UNAVAILABLE = "A dependency is unavailable; retry after the Retry-After delay";
   public static final String INTERNAL_ERROR = "Unexpected error";
   public static final String INVALID_QUOTE_TOKEN = "The quote token is malformed or its signature is invalid";

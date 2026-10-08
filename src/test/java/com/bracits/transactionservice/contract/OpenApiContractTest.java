@@ -1,10 +1,20 @@
 package com.bracits.transactionservice.contract;
 
+import static org.assertj.core.api.Assertions.assertThat;
+import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
+import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
+
 import io.swagger.parser.OpenAPIParser;
 import io.swagger.v3.oas.models.OpenAPI;
 import io.swagger.v3.oas.models.Operation;
 import io.swagger.v3.parser.core.models.ParseOptions;
 import io.swagger.v3.parser.core.models.SwaggerParseResult;
+import java.io.IOException;
+import java.nio.charset.StandardCharsets;
+import java.util.Set;
+import java.util.TreeSet;
+import java.util.stream.Collectors;
 import org.junit.jupiter.api.BeforeAll;
 import org.junit.jupiter.api.Test;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -13,18 +23,10 @@ import org.springframework.core.io.ClassPathResource;
 import org.springframework.test.web.servlet.MockMvc;
 import org.springframework.web.servlet.mvc.method.annotation.RequestMappingHandlerMapping;
 
-import java.io.IOException;
-import java.nio.charset.StandardCharsets;
-import java.util.Set;
-import java.util.TreeSet;
-import java.util.stream.Collectors;
-
-import static org.assertj.core.api.Assertions.assertThat;
-import static org.springframework.test.web.servlet.request.MockMvcRequestBuilders.get;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.content;
-import static org.springframework.test.web.servlet.result.MockMvcResultMatchers.status;
-
-/** The authored contract is valid OpenAPI 3.1, is served at /openapi.yaml, and matches the implemented endpoints. */
+/**
+ * The authored contract is valid OpenAPI 3.1, is served at /openapi.yaml, and matches the
+ * implemented endpoints.
+ */
 class OpenApiContractTest extends ApiTestSupport {
 
   private static String yaml;
@@ -39,7 +41,9 @@ class OpenApiContractTest extends ApiTestSupport {
 
   @BeforeAll
   static void parse() throws IOException {
-    yaml = new ClassPathResource("openapi/transaction-api.yaml").getContentAsString(StandardCharsets.UTF_8);
+    yaml = new ClassPathResource("openapi/transaction-api.yaml").getContentAsString(
+        StandardCharsets.UTF_8);
+
     ParseOptions options = new ParseOptions();
     options.setResolve(true);
     parsed = new OpenAPIParser().readContents(yaml, null, options);
@@ -64,6 +68,7 @@ class OpenApiContractTest extends ApiTestSupport {
       if (!path.startsWith("/api/")) {
         return;
       }
+
       item.readOperationsMap().forEach((method, operation) -> {
         assertThat(isSecured(api, operation)).as("%s %s secured", method, path).isTrue();
         assertThat(operation.getResponses()).as("%s %s responses", method, path).containsKey("401");
@@ -99,6 +104,7 @@ class OpenApiContractTest extends ApiTestSupport {
     if (operation.getSecurity() != null) {
       return !operation.getSecurity().isEmpty();
     }
-    return api.getSecurity() != null && api.getSecurity().stream().anyMatch(requirement -> !requirement.isEmpty());
+    return api.getSecurity() != null && api.getSecurity().stream()
+        .anyMatch(requirement -> !requirement.isEmpty());
   }
 }

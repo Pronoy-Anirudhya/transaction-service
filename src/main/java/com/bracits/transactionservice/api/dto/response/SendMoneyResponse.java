@@ -1,11 +1,14 @@
-package com.bracits.transactionservice.api.dto;
+package com.bracits.transactionservice.api.dto.response;
 
+import com.bracits.transactionservice.api.enums.ApiTxnStatus;
 import com.fasterxml.jackson.annotation.JsonInclude;
-
 import java.time.Instant;
 import java.util.UUID;
 
-/** 200 COMPLETED or 202 PROCESSING body of {@code POST /api/v1/send-money}. {@code completedAt} is null while PROCESSING. */
+/**
+ * 200 COMPLETED or 202 PROCESSING body of {@code POST /api/v1/send-money}. {@code completedAt} is
+ * null while PROCESSING.
+ */
 @JsonInclude(JsonInclude.Include.NON_NULL)
 public record SendMoneyResponse(
     UUID txnId,
@@ -15,5 +18,7 @@ public record SendMoneyResponse(
     long vat,
     long commission,
     long totalDebit,
-    Instant completedAt) {
+    Instant completedAt,
+    String message) {
+
 }

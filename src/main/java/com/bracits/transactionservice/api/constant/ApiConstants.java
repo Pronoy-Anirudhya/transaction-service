@@ -1,6 +1,8 @@
-package com.bracits.transactionservice.api;
+package com.bracits.transactionservice.api.constant;
 
-/** Public API paths, headers, validation patterns and Problem Details fields (spec 7.1). */
+/**
+ * Public API paths, headers, validation patterns and Problem Details fields (spec 7.1).
+ */
 public final class ApiConstants {
 
   // Paths
