@@ -1,0 +1,102 @@
+{
+  "rabbitmq_version": "4.1.4",
+  "users": [
+    {
+      "name": "txn",
+      "password_hash": "LKZ+SFR4FUZRRjyr0j2cOff3kGLeotGQqgTGZmkWB84rjF7o",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": []
+    },
+    {
+      "name": "admin",
+      "password_hash": "XwNxjZjbDhP8s1rm1nNFWIbcys7DE5LFUE8wtPo7jHznykGl",
+      "hashing_algorithm": "rabbit_password_hashing_sha256",
+      "tags": ["administrator"]
+    }
+  ],
+  "vhosts": [
+    {
+      "name": "/",
+      "description": "Send Money POC",
+      "metadata": {
+        "description": "Send Money POC",
+        "tags": []
+      }
+    }
+  ],
+  "permissions": [
+    {
+      "user": "txn",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    },
+    {
+      "user": "admin",
+      "vhost": "/",
+      "configure": ".*",
+      "write": ".*",
+      "read": ".*"
+    }
+  ],
+  "exchanges": [
+    {
+      "name": "mfs.transactions",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    },
+    {
+      "name": "mfs.transactions.dlx",
+      "vhost": "/",
+      "type": "topic",
+      "durable": true,
+      "auto_delete": false,
+      "internal": false,
+      "arguments": {}
+    }
+  ],
+  "queues": [
+    {
+      "name": "audit.send-money",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum",
+        "x-dead-letter-exchange": "mfs.transactions.dlx"
+      }
+    },
+    {
+      "name": "audit.send-money.dlq",
+      "vhost": "/",
+      "durable": true,
+      "auto_delete": false,
+      "arguments": {
+        "x-queue-type": "quorum"
+      }
+    }
+  ],
+  "bindings": [
+    {
+      "source": "mfs.transactions",
+      "vhost": "/",
+      "destination": "audit.send-money",
+      "destination_type": "queue",
+      "routing_key": "send-money.#",
+      "arguments": {}
+    },
+    {
+      "source": "mfs.transactions.dlx",
+      "vhost": "/",
+      "destination": "audit.send-money.dlq",
+      "destination_type": "queue",
+      "routing_key": "#",
+      "arguments": {}
+    }
+  ]
+}

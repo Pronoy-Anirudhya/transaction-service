@@ -1,0 +1,15 @@
+{
+  "name": "ledger: GET /internal/v1/accounts/{id}/balance -> 200 fixed sample (funded 500000, sent 100500)",
+  "priority": 10,
+  "request": {
+    "method": "GET",
+    "urlPathPattern": "/internal/v1/accounts/[0-9a-fA-F-]{36}/balance"
+  },
+  "response": {
+    "status": 200,
+    "headers": {
+      "Content-Type": "application/json"
+    },
+    "body": "{\"accountId\":\"{{request.pathSegments.[3]}}\",\"debitsPosted\":100500,\"creditsPosted\":500000,\"debitsPending\":0,\"creditsPending\":0,\"available\":399500}"
+  }
+}

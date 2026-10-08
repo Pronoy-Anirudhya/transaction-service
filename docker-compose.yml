@@ -1,0 +1,200 @@
+# transaction-service local stack.
+#
+#   Standalone (default) — WireMock ledger stub:
+#     docker compose up -d --build
+#
+#   Full — real ../ledger-service + TigerBeetle instead of the stub:
+#     docker compose down                                          # if the default stack is running
+#     docker compose --profile init run --rm tigerbeetle-format    # once: creates the data file
+#     docker compose --profile full up -d --build
+#
+# Ledger switch: transaction-service always calls http://ledger:8081. The network alias "ledger"
+# belongs to whichever ledger runs: the WireMock stub by default, ledger-service under --profile
+# full. The stub's profile list is [""]: Compose enables a service with the empty profile only
+# when NO profile is active, so the stub runs by default and is left out under --profile full
+# (and --profile init). See README "Ledger: stub or real".
+#
+# Credentials below are local-development defaults only (override them in .env, see
+# .env.example). The RabbitMQ users are defined in deploy/rabbitmq/definitions.json.
+
+x-tigerbeetle: &tigerbeetle
+  image: ghcr.io/tigerbeetle/tigerbeetle:0.17.9
+  # Docker 25+ blocks io_uring under the default seccomp profile.
+  security_opt:
+    - seccomp=unconfined
+  # Docker Desktop (macOS) otherwise fails with "error: SystemResources" (memory locking).
+  cap_add:
+    - IPC_LOCK
+  ulimits:
+    memlock:
+      soft: -1
+      hard: -1
+  volumes:
+    - tigerbeetle-data:/data
+
+services:
+  postgres:
+    image: postgres:18
+    environment:
+      POSTGRES_DB: txn_db
+      POSTGRES_USER: txn
+      POSTGRES_PASSWORD: ${TXN_DB_PASSWORD:-txn-local-dev}
+    # Spec 12: shared_buffers ~25% of RAM (override PG_SHARED_BUFFERS on the reference host),
+    # max_connections sized for 2 instances x 20 connections + Flyway, tooling and headroom.
+    command:
+      - postgres
+      - -c
+      - shared_buffers=${PG_SHARED_BUFFERS:-512MB}
+      - -c
+      - effective_cache_size=${PG_EFFECTIVE_CACHE_SIZE:-1536MB}
+      - -c
+      - max_connections=200
+      - -c
+      - wal_compression=on
+      - -c
+      - max_wal_size=4GB
+      - -c
+      - checkpoint_completion_target=0.9
+      - -c
+      - autovacuum_naptime=10s
+    shm_size: 256m
+    ports:
+      - "${PG_PORT:-5432}:5432"
+    volumes:
+      # PostgreSQL 18 images keep data under /var/lib/postgresql/18/docker: mount the parent.
+      - postgres-data:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U txn -d txn_db"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  rabbitmq:
+    image: rabbitmq:4-management
+    hostname: rabbitmq
+    ports:
+      - "${RABBIT_PORT:-5672}:5672"
+      - "${RABBIT_MGMT_PORT:-15672}:15672"
+    volumes:
+      - ./deploy/rabbitmq/rabbitmq.conf:/etc/rabbitmq/conf.d/20-poc.conf:ro
+      - ./deploy/rabbitmq/definitions.json:/etc/rabbitmq/definitions.json:ro
+      - rabbitmq-data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "-q", "check_port_connectivity"]
+      interval: 10s
+      timeout: 10s
+      retries: 10
+      start_period: 20s
+    restart: unless-stopped
+
+  # Default ledger: WireMock implementation of the ledger-service wire contract (spec 7.2).
+  ledger-stub:
+    image: wiremock/wiremock:3.13.1
+    profiles: [""]
+    command: ["--port", "8081", "--global-response-templating", "--disable-banner"]
+    volumes:
+      - ./deploy/wiremock/mappings:/home/wiremock/mappings:ro
+    networks:
+      default:
+        aliases: [ledger]
+    ports:
+      - "${LEDGER_PORT:-8081}:8081"
+    # The image's built-in HEALTHCHECK probes port 8080; the stub listens on 8081.
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/__admin/health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+      start_period: 10s
+    restart: unless-stopped
+
+  # --- profile "full": the real ledger -------------------------------------------------------
+  tigerbeetle-format:
+    <<: *tigerbeetle
+    profiles: [init]
+    command: format --cluster=0 --replica=0 --replica-count=1 --development /data/0_0.tigerbeetle
+
+  tigerbeetle:
+    <<: *tigerbeetle
+    profiles: [full]
+    command: start --addresses=0.0.0.0:3000 --development --cache-grid=256MiB /data/0_0.tigerbeetle
+    restart: unless-stopped
+
+  ledger-service:
+    build: ../ledger-service
+    image: ledger-service:local
+    profiles: [full]
+    environment:
+      POC_TIGERBEETLE_ADDRESSES: tigerbeetle:3000
+      # "test" enables POST /internal/v1/fundings (wallet funding for demos).
+      SPRING_PROFILES_ACTIVE: test
+    networks:
+      default:
+        aliases: [ledger]
+    ports:
+      - "${LEDGER_PORT:-8081}:8081"
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8081/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 70s
+      start_interval: 2s
+    depends_on:
+      tigerbeetle:
+        condition: service_started
+    restart: unless-stopped
+
+  # --- the service ---------------------------------------------------------------------------
+  transaction-service:
+    build: .
+    image: transaction-service:local
+    ports:
+      - "${TXN_PORT:-8080}:8080"
+    environment:
+      # "test" enables the support endpoints (register / fund wallet) for demos.
+      SPRING_PROFILES_ACTIVE: ${SPRING_PROFILES_ACTIVE:-test}
+      LEDGER_BASE_URL: ${LEDGER_BASE_URL:-http://ledger:8081}
+      TXN_DB_URL: jdbc:postgresql://postgres:5432/txn_db?reWriteBatchedInserts=true
+      TXN_DB_USER: txn
+      TXN_DB_PASSWORD: ${TXN_DB_PASSWORD:-txn-local-dev}
+      RABBIT_HOST: rabbitmq
+      RABBIT_USER: ${RABBIT_USER:-txn}
+      RABBIT_PASSWORD: ${RABBIT_PASSWORD:-txn-local-dev}
+      API_KEY: ${API_KEY:-local-dev-api-key}
+      QUOTE_SIGNING_KEY: ${QUOTE_SIGNING_KEY:-local-dev-quote-signing-key-change-me-0123456789}
+    deploy:
+      resources:
+        limits:
+          memory: 1g
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/actuator/health/readiness"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 60s
+      start_interval: 2s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+      # Exactly one of the two ledgers is enabled; the other is skipped (required: false).
+      ledger-stub:
+        condition: service_started
+        required: false
+      ledger-service:
+        condition: service_healthy
+        required: false
+    restart: unless-stopped
+
+volumes:
+  postgres-data:
+  rabbitmq-data:
+  tigerbeetle-data:
